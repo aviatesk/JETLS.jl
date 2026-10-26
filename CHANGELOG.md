@@ -25,7 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > [!important]
 > JETLS supports Julia 1.12.2 through 1.14.
-> It does not support Julia 1.12.1 or earlier, nor Julia 1.15+/nightly.
+> It also runs on Julia 1.15 nightly builds, but may break at any time as Julia changes.
+> It does not support Julia 1.12.1 or earlier.
 
 <!-- Added: 2026-10-26 / Remove after: 2026-11-26 -->
 > [!tip]
@@ -67,6 +68,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - Added Julia 1.14 compatibility, allowing JETLS to run on Julia 1.14 runtimes.
+
+- Added best-effort compatibility with Julia 1.15 nightly builds, allowing JETLS to run on them.
 
 - Added the [`inference/type-error/invoke`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/invoke) diagnostic: an `invoke` call whose signature argument is not a tuple type, or whose arguments do not match that signature, which raises `TypeError` at runtime, is now reported:
   ```julia

@@ -7,6 +7,7 @@ authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 projects = ["HierarchicalTestSets", "JETLSCore", "LSP", "MarkdownSource", "TOMLSource", "TestRunner", "docs", "scripts", "test"]
 
 [deps]
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JETLSCore = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
 TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
@@ -15,12 +16,16 @@ JETLSCore = {path = "JETLSCore"}
 TestRunner = {path = "TestRunner"}
 
 [compat]
+JET = "0.13"
 JETLSCore = "0.1"
 TestRunner = "0.1"
-julia = "1.12.2 - 1.14"
+julia = "1.12.2 - 1.15"
 
 [apps.jetls]
 julia_flags = ["--startup-file=no", "--history-file=no", "--threads=auto"]
+
+[preferences.JET]
+allow_unsupported_julia = true
 
 [preferences.JETLSCore]
 JETLS_DEV_MODE = true
