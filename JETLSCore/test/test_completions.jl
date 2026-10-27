@@ -1038,11 +1038,99 @@ end
         end
         @test cnt[] == 1
     end
+
+    let text = """
+        module LiveFallbackInner
+        inner_func() = 1
+        inn│
+        end
+        outer_func() = 1
+        out│
+        """
+        cnt = Ref(0)
+        with_completion_items(text) do (; result)
+            cnt[] += 1
+            if cnt[] == 1
+                cv_has(result.items, ["inner_func"])
+                cv_nhas(result.items, ["outer_func"])
+            else
+                cv_has(result.items, ["outer_func"])
+                cv_nhas(result.items, ["inner_func"])
+            end
+        end
+        @test cnt[] == 2
+    end
+
+    # qualified method definitions add methods to the bindings of other modules
+    let text = """
+        live_unqualified(x) = x
+        function Base.live_qualified_func(x) x end
+        Base.live_qualified_short(x) = x
+        function Base.var"@live_qualified_macro"(x) x end
+        live_│
+        """
+        cnt = Ref(0)
+        with_completion_items(text) do (; result)
+            cv_has(result.items, ["live_unqualified"])
+            cv_nhas(result.items,
+                ["live_qualified_func", "live_qualified_short", "@live_qualified_macro"])
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # a `module` block of the fallback context does not define the visible `Base`
+    let text = """
+        module Base
+        phantom_live() = 1
+        end
+        Base.phantom_│
+        """
+        cnt = Ref(0)
+        with_completion_items(text) do (; result)
+            cv_nhas(result.items, ["phantom_live"])
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # the docstring of a module is evaluated within the module
+    let text = """
+        outer_live() = 1
+        \"\"\"
+        \$(inner_│)
+        \"\"\"
+        module DocumentedLive
+        inner_live() = 1
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text) do (; result)
+            cv_has(result.items, ["inner_live"])
+            cv_nhas(result.items, ["outer_live"])
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+end
+
+@testset "global completion at unfinished module EOF" begin
+    for prefix in ("", "module LiveFallbackOuter\n")
+        text = prefix * """
+            outer_func() = 1
+            module LiveFallbackInner
+            inner_func() = 1
+            inn│"""
+        with_completion_items(text) do (; result)
+            cv_has(result.items, ["inner_func"])
+            cv_nhas(result.items, ["outer_func"])
+        end
+    end
 end
 
 @testset "global completion for live definitions in analyzed modules" begin
-    # The live texts keep the line layout of the saved texts so that the analyzed
-    # module ranges still apply to them.
+    # The live text adds lines in `LiveInner`, so the module ranges from the full analysis
+    # of the saved text no longer match it.
     main_saved = """
         include("SUBFILE")
 
@@ -1051,12 +1139,9 @@ end
 
         module LiveInner
         inner_existing() = 1
-
-
         end # module LiveInner
 
         end # module LiveOuter
-
         """
     main_live = """
         include("SUBFILE")
@@ -1067,6 +1152,7 @@ end
         module LiveInner
         inner_existing() = 1
         inner_live() = 1
+        inner_shifted() = 1
         inner_│
         end # module LiveInner
         outer_│
@@ -1102,18 +1188,18 @@ end
                     return raw_res.result.items
                 end
 
-                cv_has(inner_items, ["inner_existing", "inner_live"])
+                cv_has(inner_items, ["inner_existing", "inner_live", "inner_shifted"])
                 cv_nhas(inner_items, ["outer_live", "main_live", "sub_live"])
 
                 cv_has(outer_items, ["outer_existing", "outer_live"])
-                cv_nhas(outer_items, ["inner_live", "main_live", "sub_live"])
-                outer_item(label) = only(filter(item -> item.label == label, outer_items))
-                @test outer_item("outer_live").sortText == outer_item("outer_existing").sortText
-                @test outer_item("outer_live").data === nothing
-                @test outer_item("outer_existing").data isa GlobalCompletionData
+                cv_nhas(outer_items, ["inner_live", "inner_shifted", "main_live", "sub_live"])
 
-                cv_has(dot_items, ["inner_existing", "inner_live"])
+                cv_has(dot_items, ["inner_existing", "inner_live", "inner_shifted"])
                 cv_nhas(dot_items, ["outer_live", "main_live"])
+                dot_item(label) = only(filter(item -> item.label == label, dot_items))
+                @test dot_item("inner_live").sortText == dot_item("inner_existing").sortText
+                @test dot_item("inner_live").data === nothing
+                @test dot_item("inner_existing").data isa GlobalCompletionData
 
                 cv_has(top_items, ["main_live", "sub_live", "sub_existing"])
                 cv_nhas(top_items, ["outer_live", "inner_live"])
@@ -1122,6 +1208,94 @@ end
             rm(sub_path; force=true)
         end
     end
+end
+
+@testset "global completion for live definitions of a file included twice" begin
+    main = """
+        module SharedA
+        include("SHARED")
+        shared_│
+        end
+        module SharedB
+        include("SHARED")
+        shared_│
+        end
+        """
+    shared_saved = "shared_existing() = 1\n"
+    shared_live = "shared_existing() = 1\nshared_live() = 1\n"
+    withscript("") do script_path
+        shared_path = script_path * "_shared.jl"
+        try
+            write(shared_path, shared_saved)
+            main′, positions = JETLSCore.get_text_and_positions(
+                replace(main, "SHARED" => basename(shared_path)))
+            write(script_path, main′)
+            main_uri = filepath2uri(script_path)
+            shared_uri = filepath2uri(shared_path)
+            withserver() do (; server, writereadmsg, id_counter)
+                JETLSCore.cache_file_info!(server, main_uri, 1, main′)
+                JETLSCore.cache_saved_file_info!(server.state, main_uri, main′)
+                JETLSCore.request_analysis!(server, main_uri, #=invalidate=#false;
+                    wait=true, notify_diagnostics=false)
+                JETLSCore.cache_file_info!(server, shared_uri, 1, shared_live)
+                for pos in positions
+                    (; raw_res) = writereadmsg(CompletionRequest(;
+                        id = id_counter[] += 1,
+                        params = CompletionParams(;
+                            textDocument = TextDocumentIdentifier(; uri = main_uri),
+                            position = pos)))
+                    cv_has(raw_res.result.items, ["shared_existing", "shared_live"])
+                end
+            end
+        finally
+            rm(shared_path; force=true)
+        end
+    end
+end
+
+@testset "global completion for live definitions of a redefined module" begin
+    saved = """
+        module Redefined
+        first_live() = 1
+        end
+        module Redefined
+        second_live() = 1
+        end
+        """
+    live′, positions = JETLSCore.get_text_and_positions(saved * "Redefined.│\n")
+    withscript(saved) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server, writereadmsg, id_counter)
+            JETLSCore.cache_file_info!(server, uri, 1, saved)
+            JETLSCore.cache_saved_file_info!(server.state, uri, saved)
+            JETLSCore.request_analysis!(server, uri, #=invalidate=#false;
+                wait=true, notify_diagnostics=false)
+            JETLSCore.cache_file_info!(server, uri, 2, live′)
+            (; raw_res) = writereadmsg(CompletionRequest(;
+                id = id_counter[] += 1,
+                params = CompletionParams(;
+                    textDocument = TextDocumentIdentifier(; uri),
+                    position = only(positions))))
+            cv_has(raw_res.result.items, ["second_live"])
+            cv_nhas(raw_res.result.items, ["first_live"])
+        end
+    end
+end
+
+module ambiguous_owner
+module M1; const Shared = Base; export Shared; end
+module M2; const Shared = Base; export Shared; end
+using .M1, .M2
+end
+
+@testset "`module` block named after a binding imported from multiple modules" begin
+    st0_top = jlparse("""
+        module Shared
+        end
+        """)
+    world = Base.get_world_counter()
+    @test only(JETLSCore.collect_source_modules(st0_top, ambiguous_owner, world)).second ==
+        JETLSCore.SourceModule(ambiguous_owner, [:Shared])
 end
 
 @testset "macro completion" begin

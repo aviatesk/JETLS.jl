@@ -111,6 +111,21 @@ const InferredContextCacheData = Base.PersistentDict{
     InferredContextCacheKey,Union{Nothing,InferredTreeContext}}
 const InferredContextCache = LWContainer{InferredContextCacheData,LWStats}
 
+"""
+    ModuleBlock
+
+A `module` block in a source text: `range` is the byte range of the `module` expression,
+starting at its docstring, which is evaluated within the module, `body` that of its body,
+`name` its module name, and `parent` the index of the enclosing `ModuleBlock`, or `0` at
+the top level.
+"""
+struct ModuleBlock
+    range::UnitRange{Int}
+    body::UnitRange{Int}
+    name::Symbol
+    parent::Int
+end
+
 # Current text snapshot for both synchronized documents and on-demand unsynced workspace
 # files, plus per-snapshot caches derived from the parsed stream.
 struct FileInfo

@@ -453,6 +453,154 @@ function get_context_module(state::ServerState, uri::URI, pos::Position; lookup_
     return get_context_module(analysis_info, lookup_uri, pos)
 end
 
+"""
+    get_file_modules(analysis_info, uri::URI) -> Vector{Module}
+
+Return the modules that the top level of the file at `uri` belongs to, i.e. the modules
+that the file is `include`d into, regardless of the `module` blocks within the file.
+"""
+get_file_modules(::Nothing, ::URI) = Module[FallbackAnalysisContext]
+get_file_modules(oos::OutOfScope, ::URI) =
+    Module[something(oos.module_context, FallbackAnalysisContext)]
+function get_file_modules(analysis_result::AnalysisResult, uri::URI)
+    _has_analyzed_context(analysis_result, uri) || return Module[FallbackAnalysisContext]
+    safi = analyzed_file_info(analysis_result, uri)::JET.AnalyzedFileInfo
+    # The range of the top level of the file contains the ranges of the modules in it, and
+    # is the widest one even when JET records no whole-file range, e.g. for an included
+    # file with a syntax error.
+    toprange = 1:0
+    for (range, _) in safi.module_range_infos
+        toprange ⊆ range && (toprange = range)
+    end
+    filemods = Module[]
+    for (range, mod) in safi.module_range_infos
+        range == toprange && push!(filemods, mod)
+    end
+    return filemods
+end
+
+"""
+    get_file_module(analysis_info, uri::URI) -> Module
+
+Return the module that the top level of the file at `uri` belongs to (see
+[`get_file_modules`](@ref)). For a file `include`d into multiple modules, this is the module
+that full analysis loaded it into last.
+"""
+get_file_module(analysis_info::Union{Nothing,AnalysisInfo}, uri::URI) =
+    last(get_file_modules(analysis_info, uri))
+
+"""
+    SourceModule
+
+The module that code belongs to according to the `module` blocks enclosing it in the
+current source. `mod` is the innermost of those modules that exists in the analysis world,
+and `path` holds the names of the `module` blocks nested in it that do not, e.g. modules
+that full analysis has not loaded yet, or any `module` block of a file analyzed in the
+fallback context.
+"""
+struct SourceModule
+    mod::Module
+    path::Vector{Symbol}
+end
+Base.:(==)(a::SourceModule, b::SourceModule) = a.mod === b.mod && a.path == b.path
+Base.hash(sm::SourceModule, h::UInt) = hash(sm.path, hash(sm.mod, hash(SourceModule, h)))
+
+"""
+    collect_source_modules(st0_top::SyntaxTree, filemod::Module, world::UInt)
+        -> Vector{Pair{UnitRange{Int},SourceModule}}
+
+Collect the byte range of each `module` block that `iterate_toplevel_tree` descends into,
+from its docstring to the end of its body, paired with its [`SourceModule`](@ref) resolved
+from `filemod`, the module that the top level of the file belongs to. Enclosing blocks
+come before nested ones.
+"""
+function collect_source_modules(st0_top::SyntaxTree, filemod::Module, world::UInt)
+    blocks = collect_module_blocks(st0_top)
+    source_modules = Pair{UnitRange{Int},SourceModule}[]
+    for (index, block) in enumerate(blocks)
+        parent = block.parent == 0 ?
+            SourceModule(filemod, Symbol[]) : last(source_modules[block.parent])
+        submod = isempty(parent.path) && !is_ambiguous_module_block(blocks, index) ?
+            resolve_submodule(parent.mod, block.name, world) : nothing
+        source_module = submod === nothing ?
+            SourceModule(parent.mod, Symbol[parent.path; block.name]) :
+            SourceModule(submod, Symbol[])
+        push!(source_modules, (first(block.range):last(block.body)) => source_module)
+    end
+    return source_modules
+end
+
+# The current binding comes from only one of the sibling `module` blocks of the same name,
+# e.g. of a module redefined in the same file, but which one is unknown.
+function is_ambiguous_module_block(blocks::Vector{ModuleBlock}, index::Int)
+    (; parent, name) = blocks[index]
+    return count(block::ModuleBlock -> block.parent == parent && block.name === name,
+        blocks) > 1
+end
+
+# The module that a `module` block named `name` defines in `mod`, if it exists at `world`.
+# A module merely visible in `mod`, e.g. `Base` or one that `mod` imports, does not count.
+function resolve_submodule(mod::Module, name::Symbol, world::UInt)
+    Base.invoke_in_world(world, isdefinedglobal, mod, name)::Bool || return nothing
+    owner = try
+        Base.invoke_in_world(world, Base.binding_module, mod, name)::Module
+    catch # thrown for a name that `mod` imports from multiple modules
+        return nothing
+    end
+    owner === mod || return nothing
+    submod = Base.invoke_in_world(world, getglobal, mod, name)
+    return submod isa Module ? submod : nothing
+end
+
+"""
+    collect_module_blocks(st0_top::SyntaxTree) -> Vector{ModuleBlock}
+
+Collect the `module` blocks in `st0_top` that `iterate_toplevel_tree` descends into, where
+enclosing blocks come before nested ones.
+"""
+collect_module_blocks(st0_top::SyntaxTree) = collect_module_blocks!(ModuleBlock[], st0_top, 0)
+
+function collect_module_blocks!(
+        blocks::Vector{ModuleBlock}, st0::SyntaxTree, parent::Int;
+        range_st0::SyntaxTree = st0
+    )
+    if JS.head(st0) === :toplevel
+        for i = 1:JS.numchildren(st0)
+            collect_module_blocks!(blocks, st0[i], parent)
+        end
+    elseif is_doc0_any(st0)
+        for i = 3:JS.numchildren(st0)
+            # the docstring of a module is evaluated within the module
+            collect_module_blocks!(blocks, st0[i], parent; range_st0 = st0)
+        end
+    elseif JS.head(st0) === :module
+        module_name = @something module_name_node(st0) return blocks
+        bodyidx = @something findlast(
+            i -> JS.head(st0[i]) === :block, 1:JS.numchildren(st0)) return blocks
+        name = @something get_name_val(module_name) return blocks
+        body = st0[bodyidx]
+        range = JS.first_byte(range_st0):JS.last_byte(st0)
+        push!(blocks, ModuleBlock(range, JS.byte_range(body), Symbol(name), parent))
+        index = length(blocks)
+        for i = 1:JS.numchildren(body)
+            collect_module_blocks!(blocks, body[i], index)
+        end
+    end
+    return blocks
+end
+
+function source_module_at(
+        source_modules::Vector{Pair{UnitRange{Int},SourceModule}}, offset::Int,
+        filemod::Module
+    )
+    for i = length(source_modules):-1:1
+        range, source_module = source_modules[i]
+        # At an unfinished module's EOF, the cursor is just past the body's last byte.
+        first(range) ≤ offset ≤ last(range) + 1 && return source_module
+    end
+    return SourceModule(filemod, Symbol[])
+end
+
 get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(::OutOfScope, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(analysis_result::AnalysisResult, ::URI) = analysis_result.analyzer

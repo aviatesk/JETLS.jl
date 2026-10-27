@@ -388,7 +388,9 @@ function global_completions!(
         all=true, imported=true, usings=true)::Vector{Symbol}
 
     is_cancelled(comp_ctx.cancel_flag) && return false
-    live_names = live_global_names(comp_ctx, context_module)
+    live_scope = isnothing(dotprefix) ? cursor_source_module(comp_ctx) :
+        SourceModule(context_module, Symbol[])
+    live_names = live_global_names(comp_ctx, live_scope)
 
     is_cancelled(comp_ctx.cancel_flag) && return false
     union!(prioritized_names, live_names)
@@ -476,29 +478,50 @@ function global_completions!(
     return is_completed ? #=isIncomplete=#false : nothing
 end
 
-# Globals of `context_module` introduced by the live contents of synchronized documents in
-# the analysis unit, which full-analysis may not reflect yet (e.g. unsaved definitions).
+# Globals that the live contents of synchronized documents in the analysis unit introduce
+# to `scope`, which full-analysis may not reflect yet (e.g. unsaved definitions).
 # Unsynchronized files are skipped: full-analysis loads their on-disk contents, and lowering
 # all of them would delay completion.
-function live_global_names(comp_ctx::CompletionCtx, context_module::Module)
-    (; state, snapshot, cancel_flag) = comp_ctx
+# Top-level statements are attributed by the `module` blocks enclosing them rather than by
+# `binfo.mod`, which comes from the line ranges of the last full analysis: those ranges
+# drift while editing, and are missing in the fallback context.
+function live_global_names(comp_ctx::CompletionCtx, scope::SourceModule)
+    (; state, snapshot, world, cancel_flag) = comp_ctx
     names = Set{Symbol}()
     analysis_info = get_analysis_info(state.analysis_manager, snapshot.cache_uri)
     for uri in collect_search_uris(snapshot.cache_uri, analysis_info)
         is_cancelled(cancel_flag) && break
         fi = uri == snapshot.cache_uri ? snapshot.fi :
             @something get_file_info(state, uri) continue
-        iterate_toplevel_tree(build_syntax_tree(fi)) do st0::SyntaxTree
+        st0_top = build_syntax_tree(fi)
+        # a file `include`d into multiple modules introduces its globals to each of them
+        filemods = get_file_modules(get_analysis_info(state.analysis_manager, uri), uri)
+        source_modules = map(filemods) do filemod::Module
+            filemod => collect_source_modules(st0_top, filemod, world)
+        end
+        iterate_toplevel_tree(st0_top) do st0::SyntaxTree
             is_cancelled(cancel_flag) && return traversal_terminator
+            any(source_modules) do (filemod, source_modules′)
+                source_module_at(source_modules′, JS.first_byte(st0), filemod) == scope
+            end || return
             binding_occurrences = @something get_binding_occurrences!(state, uri, fi, st0) return
             for (binfo, occurrences) in binding_occurrences
-                binfo.kind === :global && binfo.mod === context_module || continue
-                all(o -> o.kind === :use, occurrences) && continue
+                binfo.kind === :global || continue
+                all(o -> o.kind === :use || o.kind === :qualified_method_def, occurrences) &&
+                    continue
                 push!(names, Symbol(binfo.name))
             end
         end
     end
     return names
+end
+
+function cursor_source_module(comp_ctx::CompletionCtx)
+    (; state, snapshot, st0_top, world) = comp_ctx
+    filemod = get_file_module(
+        get_analysis_info(state.analysis_manager, snapshot.cache_uri), snapshot.cache_uri)
+    source_modules = collect_source_modules(st0_top, filemod, world)
+    return source_module_at(source_modules, comp_ctx.offset, filemod)
 end
 
 # Property completions

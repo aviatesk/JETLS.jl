@@ -84,6 +84,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed [type inlay hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types), hover, and other features that show inferred types failing on Julia 1.14 and later for code that uses `ccall`, such as the `Sockets` standard library.
 
+- Fixed completion of global names offering names that open files define in a different `module` block, e.g. a function of the enclosing module inside a nested `module` block.
+  This happened in particular in [files without full analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/live/fallback), and near the boundaries of `module` blocks after edits that are not saved yet.
+
 ## 2026-11-04
 
 - Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)
