@@ -1340,10 +1340,10 @@ function const_prop_function_heuristic(interp::AbstractInterpreter, @nospecializ
         # it is almost useless to inline the op when all the same type,
         # but highly worthwhile to inline promote of a constant
         length(argtypes) > 2 || return false
-        t1 = widenconst(argtypes[2])
+        t1 = widenconst_split(argtypes[2])
         for i in 3:length(argtypes)
             at = argtypes[i]
-            ty = isvarargtype(at) ? unwraptv(at) : widenconst(at)
+            ty = isvarargtype(at) ? unwraptv(at) : widenconst_split(at)
             if ty !== t1
                 return true
             end
@@ -3133,7 +3133,9 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         end
     elseif la == 2 && f === Core.typename
         return Future{CallMeta}(call, interp, sv) do call, interp, sv
-            return CallMeta(typename_static(argtypes[2]), Bottom, EFFECTS_TOTAL, MethodResultPure())
+            # wrap `call.info` so that a call that does not fold to a constant can still be
+            # inlined, rather than left as a dynamic dispatch
+            return CallMeta(typename_static(argtypes[2]), Bottom, EFFECTS_TOTAL, MethodResultPure(call.info))
         end
     elseif f === Core._hasmethod
         return Future{CallMeta}(call, interp, sv) do call, interp, sv
@@ -3219,7 +3221,7 @@ function abstract_call_unknown(interp::AbstractInterpreter, @nospecialize(ft),
         return abstract_call_opaque_closure(interp,
             ft, ArgInfo(arginfo.fargs, newargtypes), si, vtypes, sv, #=check=#true)
     end
-    wft = widenconst(ft)
+    wft = widenconst_split(ft)
     if hasintersect(wft, Builtin)
         add_remark!(interp, sv, "Could not identify method table for call")
         return Future(CallMeta(Any, Any, Effects(), NoCallInfo()))
@@ -4561,7 +4563,7 @@ end
 end
 @nospecializeinfer function widenreturn_consts(@nospecialize(rt))
     isa(rt, Const) && return rt
-    return widenconst(rt)
+    return widenconst_split(rt)
 end
 
 @nospecializeinfer function widenreturn(::JLTypeLattice, @nospecialize(rt), ::BestguessInfo)
@@ -4937,7 +4939,7 @@ function typeinf_local(interp::AbstractInterpreter, frame::InferenceState, nextr
             end
             if changes !== nothing
                 stoverwrite1!(currstate, changes)
-                update_alias_table!(slot_aliases, stmt, frame.src.code)
+                update_alias_table!(slot_aliases, stmt, frame.src.code, currstate, bbstart, currpc)
             end
             if refinements isa SlotRefinement
                 apply_refinement!(𝕃ᵢ, refinements.slot, refinements.typ, currstate, changes, slot_aliases)
@@ -5034,7 +5036,8 @@ end
 
 # Core transfer function: update an alias table for a single statement.
 # Handles assignments (`y = x`) and `NewvarNode` declaration
-function update_alias_table!(aliases::Vector{Int}, @nospecialize(stmt), code::Vector{Any})
+function update_alias_table!(aliases::Vector{Int}, @nospecialize(stmt), code::Vector{Any},
+                             currstate::VarTable, bbstart::Int, currpc::Int)
     if isa(stmt, NewvarNode)
         # When a slot is killed, also clear any slots that alias it, since
         # those aliases are now stale (the target has a new undefined value).
@@ -5052,11 +5055,21 @@ function update_alias_table!(aliases::Vector{Int}, @nospecialize(stmt), code::Ve
     # They still hold the OLD value of lhs, so the alias lhs_id→... is stale.
     clear_slot_aliases!(aliases, lhs_id)
     rhs === nothing && return
+    readpc = currpc
     while isa(rhs, SSAValue)
-        rhs = code[rhs.id]
+        readpc = rhs.id
+        rhs = code[readpc]
     end
     if isa(rhs, SlotNumber)
         rhs_id = slot_id(rhs)
+        if readpc != currpc
+            # `lhs` holds the value the slot had when it was read at `readpc`, which is
+            # stale if the slot was reassigned in between (e.g. `x, y = y, x`).
+            # `ssadef` can only order definitions within the current block,
+            # so give up on reads from earlier blocks.
+            readpc ≥ bbstart || return
+            readpc < currstate[rhs_id].ssadef < currpc && return
+        end
         rhs_alias = aliases[rhs_id]
         aliases[lhs_id] = rhs_alias == 0 ? rhs_id : rhs_alias
     end

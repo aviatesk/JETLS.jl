@@ -2936,10 +2936,10 @@ let S = (Union{T, U} where {T<:Int, U<:Int})
     getfield1_61323(x) = getfield(x, 1)
     @test call_type_int61323(getvar61323, S) isa TypeVar
     @test call_type_int61323(getfield1_61323, S) isa TypeVar
-    @test Base.return_types(getvar61323, (Type{Int},)) == Any[TypeVar]
-    @test Base.return_types(getvar61323, (Core.TypeEgal{Int},)) == Any[Union{}]
-    @test TypeVar <: only(Base.return_types(getfield1_61323, (Type{Int},)))
-    @test Union{} ∉ Base.return_types(supertype, (Type{Int},))
+    @test Base.infer_return_type(getvar61323, (Type{Int},)) == TypeVar
+    @test Base.infer_return_type(getvar61323, (Core.TypeEgal{Int},)) == Union{}
+    @test TypeVar <: Base.infer_return_type(getfield1_61323, (Type{Int},))
+    @test Union{} != Base.infer_return_type(supertype, (Type{Int},))
     let 𝕃 = Compiler.fallback_lattice
         @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(:name)) === Compiler.Const(Int.name)
         @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(:super)) === Type{Signed}
@@ -5403,6 +5403,46 @@ end == Int
         end
         return nothing
     end == Union{Nothing, String}
+    @test Base.infer_return_type((Any, Any)) do a, b
+        x = a; y = b
+        x, y = y, x
+        if b isa Int
+            return y
+        end
+        return nothing
+    end == Any
+    @test Base.infer_return_type((Any, Any)) do a, b
+        x = a; y = b
+        x, y = y, x
+        typeassert(b, Int)
+        return y
+    end == Any
+    # after the swap, `x` does hold `b` and should still be refined
+    @test Base.infer_return_type((Any, Any)) do a, b
+        x = a; y = b
+        x, y = y, x
+        if b isa Int
+            return x
+        end
+        return nothing
+    end == Union{Nothing, Int}
+    @test Base.infer_return_type((Any, Any, Bool)) do a, b, c
+        x = a
+        y = b
+        y, z = x, (c && (x = 1; true); y)
+        if x isa Int
+            return y
+        end
+        return nothing
+    end == Any
+    @test Base.infer_return_type((Any,)) do a
+        x = y = identity(a)
+        z = x
+        if x isa Int
+            return z
+        end
+        return nothing
+    end == Union{Nothing, Int}
     # typeassert-based refinement should also propagate to aliases
     @test Base.infer_return_type((Any,)) do x
         y = x
