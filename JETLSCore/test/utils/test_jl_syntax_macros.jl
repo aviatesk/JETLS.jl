@@ -23,6 +23,13 @@ isnothing(_) = true
 something(_) = :shadowed
 end
 
+module atomic_macro_alias_module
+import Base: @atomic as @at
+macro atomic(_)
+    return nothing
+end
+end
+
 function jlexpand(
         context_module::Module, code::AbstractString; recursive::Bool = true
     )
@@ -259,6 +266,43 @@ end
             binfo = JL.get_binding(result.ctx3, result.binding)
             @test binfo.name == "MyStruct"
             @test binfo.kind === :global
+        end
+    end
+
+    @testset "`@atomic` fields" begin
+        let res = jlresolve("""
+                @kwdef mutable struct A
+                    @atomic x::Int
+                    y::Int = x + 1
+                end
+                """)
+            assert_no_binding(res, :global, "x")
+        end
+
+        # Recognized by the binding of the macro, not by its name
+        let res = jlresolve(atomic_macro_alias_module, """
+                @kwdef mutable struct A
+                    @atomic x::Int
+                    @at y::Int
+                    z::Int = x + y
+                end
+                """)
+            assert_binding_provenance(res, :global, "x")
+            assert_no_binding(res, :global, "y")
+        end
+
+        jleval("""
+            @kwdef mutable struct KwdefAtomicFields
+                @atomic a::Int
+                (@atomic b::Int) = 2
+                Base.@atomic c
+                d::Int = 4
+            end
+            """)
+        let T = lowering_module.KwdefAtomicFields
+            @test all(i -> Base.isfieldatomic(T, i), 1:3)
+            x = T(; a = 1, c = 3)
+            @test ((@atomic x.a), (@atomic x.b), (@atomic x.c), x.d) == (1, 2, 3, 4)
         end
     end
 end

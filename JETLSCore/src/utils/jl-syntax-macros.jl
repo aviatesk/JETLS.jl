@@ -1177,10 +1177,22 @@ function _kwdef_extract_name(st::SyntaxTree)
         elseif (k === :(::) || k === :const || k === :atomic) &&
                JS.numchildren(st) >= 1
             st = st[1]
+        elseif _kwdef_is_atomic_field(st)
+            st = st[3]
         else
             return nothing
         end
     end
+end
+
+# Base's `@kwdef` expands macros in the struct body first, and sees the `atomic` declaration
+# that `Base.@atomic x` or `Base.@atomic x::T` expands to. The macro name is resolved as
+# JuliaLowering does, in the module of its scope layer and in the expansion world.
+function _kwdef_is_atomic_field(st::SyntaxTree)
+    (JS.head(st) === :macrocall && JS.numchildren(st) == 3 &&
+        JS.head(st[3]) in (:identifier, :(::))) || return false
+    return is_macrocall_binding0(BS.syntax_module(st[1]), Base.tls_world_age(), st,
+        Base, Symbol("@atomic"))
 end
 
 function _kwdef_make_constructors(
