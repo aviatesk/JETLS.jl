@@ -65,6 +65,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- Updated the compiler implementation, fixing inference errors that occur in specific cases on Julia 1.14 and nightly builds.
+
 ### Fixed
 
 - Fixed false [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports on `@atomic` fields of a `@kwdef` struct used in the default values of later fields:
