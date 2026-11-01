@@ -300,7 +300,7 @@ end
                     d::Int = 4
                 end
                 """)
-            let T = lowering_module.KwdefAtomicFields
+            let T = @invokelatest lowering_module.KwdefAtomicFields
                 @test all(i -> Base.isfieldatomic(T, i), 1:3)
                 x = T(; a = 1, c = 3)
                 @test ((@atomic x.a), (@atomic x.b), (@atomic x.c), x.d) == (1, 2, 3, 4)
