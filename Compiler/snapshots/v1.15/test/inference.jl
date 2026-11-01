@@ -1655,6 +1655,11 @@ tpara18457(::Type{AbstractMyType18457{I}}) where {I} = I
 tpara18457(::Type{A}) where {A<:AbstractMyType18457} = tpara18457(supertype(A))
 @test tpara18457(MyType18457{true}) === true
 
+struct ShiftTri{A,B,C} end
+shift_tri(::Type{ShiftTri{A,B,C}}, n::Int) where {A,B,C} = n == 0 ? Val(A) : shift_tri(ShiftTri{B,C,C}, n - 1)
+@test only(Base.return_types(n -> shift_tri(ShiftTri{Int8,Int16,Vector{Int}}, n), (Int,))) ==
+    Union{Val{Int8}, Val{Int16}, Val{Vector{Int}}}
+
 @testset "type inference error #19322" begin
     Y_19322 = reshape(round.(Int, abs.(randn(5*1000))) .+ 1, 1000, 5)
 
@@ -2966,7 +2971,9 @@ let S = (Union{T, U} where {T<:Int, U<:Int})
         @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(:name)) === Compiler.Const(Int.name)
         @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(:super)) === Type{Signed}
         @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(:foo)) === Union{}
+        @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(1.0)) === Union{}
     end
+    @test Base.infer_return_type(x -> getfield(x, 1.0), (Type{Int},)) == Union{}
 end
 
 # Defined type-valued static parameters should retain egality so DataType
@@ -4007,6 +4014,13 @@ end
 tail_is_ntuple_val((@nospecialize t::Tuple)) = Val(tail_is_ntuple(t))
 @test Base.return_types(tail_is_ntuple, (Tuple,)) |> only === Bool
 @test Base.return_types(tail_is_ntuple_val, (Tuple,)) |> only === Val{true}
+function condgoto(x, q)
+    h = x isa Int
+    q && @goto a
+    @label b; h = false
+    @label a; h = false; @goto b
+end
+@test Base.infer_return_type(condgoto, (Any, Bool)) === Union{}
 
 # https://github.com/JuliaLang/julia/issues/47435
 is_closed_ex(e::InvalidStateException) = true

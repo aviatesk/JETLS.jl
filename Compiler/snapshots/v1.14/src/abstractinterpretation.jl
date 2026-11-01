@@ -2963,6 +2963,24 @@ function argtypes_are_actually_getglobal(argtypes::Vector{Any})
     return isa(M.val, Module) && isa(s.val, Symbol)
 end
 
+# The optimizer turns splatted tuples into `Core.svec` calls, and the type of an svec does not
+# record its elements. Look through those calls so that splatting them stays precise.
+function svec_apply_argtypes(𝕃::AbstractLattice, fargs::Vector{Any}, argtypes::Vector{Any}, ir::IRCode)
+    newargtypes = argtypes
+    for i in 4:min(length(fargs), length(argtypes))
+        a = fargs[i]
+        isa(a, SSAValue) || continue
+        isa(argtypes[i], Const) && continue
+        stmt = ir[a][:stmt]
+        is_known_call(stmt, Core.svec, ir) || continue
+        if newargtypes === argtypes
+            newargtypes = copy(argtypes)
+        end
+        newargtypes[i] = tuple_tfunc(𝕃, Any[argextype(x, ir) for x in stmt.args[2:end]])
+    end
+    return newargtypes
+end
+
 # call where the function is known exactly
 function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         arginfo::ArgInfo, si::StmtInfo, vtypes::Union{VarTable,Nothing},
@@ -2974,6 +2992,9 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
     𝕃ᵢ = typeinf_lattice(interp)
     if isa(f, Builtin)
         if f === _apply_iterate
+            if sv isa IRInterpretationState && fargs !== nothing
+                return abstract_apply(interp, svec_apply_argtypes(𝕃ᵢ, fargs, argtypes, sv.ir), si, vtypes, sv)
+            end
             return abstract_apply(interp, argtypes, si, vtypes, sv)
         elseif f === invoke
             return abstract_invoke(interp, arginfo, si, vtypes, sv)
@@ -3466,7 +3487,7 @@ function abstract_eval_new(interp::AbstractInterpreter, e::Expr, sstate::Stateme
         # information beyond the declared type.
         if fcount !== nothing
             # `:new` throws on a `UnionAll` or `Union` rep that is only `==` to `rt` (#61323)
-            nothrow = isconcretedispatch(rt) && isconstType(widenconst(argtype))
+            nothrow = isconcretedispatch(rt) && widenconst(argtype) <: DataType
             @assert nargs ≤ fcount "malformed :new expression" # syntactically enforced by the front-end
             ats = Vector{Any}(undef, nargs)
             local anyrefine = false
@@ -3545,7 +3566,7 @@ function abstract_eval_splatnew(interp::AbstractInterpreter, e::Expr, sstate::St
     argtype = abstract_eval_value(interp, e.args[1], sstate, sv)
     rt, isexact = instanceof_tfunc(argtype, true)
     # `:splatnew` throws on a `UnionAll` or `Union` rep that is only `==` to `rt` (#61323)
-    isexact = isexact && isconstType(widenconst(argtype))
+    isexact = isexact && widenconst(argtype) <: DataType
     nothrow = false
     if length(e.args) == 2 && isconcretedispatch(rt) && !ismutabletype(rt)
         at = abstract_eval_value(interp, e.args[2], sstate, sv)
@@ -5207,7 +5228,7 @@ function typeinf(interp::AbstractInterpreter, frame::InferenceState{I}) where {I
             time_now = _time_ns()
             callee.time_self_ns += (time_now - time_before)
             time_before = time_now
-            finish_nocycle(interp, callee, time_before)
+            time_before = finish_nocycle(interp, callee, time_before)
             callee.frameid == 0 && break
             takenext = length(callstack)
             nextstateid = takenext + 1 - frame.frameid
@@ -5231,7 +5252,7 @@ function typeinf(interp::AbstractInterpreter, frame::InferenceState{I}) where {I
                 end
             end
             if no_active_ips_in_cycle
-                finish_cycle(interp, callstack, callee.cycleid, time_before)
+                time_before = finish_cycle(interp, callstack, callee.cycleid, time_before)
             end
             takenext = length(callstack)
             nextstateid = takenext + 1 - frame.frameid
