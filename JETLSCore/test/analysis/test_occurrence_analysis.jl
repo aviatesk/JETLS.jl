@@ -723,7 +723,9 @@ end
                 ("Sub.│x│ .= 1", Sub, (:use,)),
                 ("Sub.Deep.│x│", Deep, (:use,)),
                 ("Sub.Deep.│x│ += 1", Deep, (:use,)),
-                ("Sub.Deep.│x│ .= 1", Deep, (:use,)))
+                ("Sub.Deep.│x│ .= 1", Deep, (:use,)),
+                ("@atomic :acquire Sub.│x│", Sub, (:use,)),
+                ("@atomic Sub.Deep.│x│ += 1", Deep, (:use,)))
             clean_code, positions = JETLSCore.get_text_and_positions(code)
             fi = JETLSCore.FileInfo(#=version=#0, clean_code, "testfile.jl")
             range = Range(; start=positions[1], var"end"=positions[2])

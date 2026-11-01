@@ -79,6 +79,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
+- Fixed diagnostics such as [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var), [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var), and [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) not being reported for the code within `@atomic`, `@atomicswap`, `@atomicreplace`, and `@atomiconce`, where hover, inlay hints, and other features that show inferred types did not work either:
+  ```julia
+  function add!(c::Counter, n::Int)
+      @atomic c.count += m  # now reported as `lowering/undef-global-var`
+  end
+  ```
+  Invalid uses of these macros are now also reported at the invalid part rather than at the whole macro call.
+
 ## 2026-10-26
 
 - Commit: [`c24f9a1`](https://github.com/aviatesk/JETLS.jl/commit/c24f9a1)
