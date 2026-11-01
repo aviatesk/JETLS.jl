@@ -3487,7 +3487,7 @@ function abstract_eval_new(interp::AbstractInterpreter, e::Expr, sstate::Stateme
         # information beyond the declared type.
         if fcount !== nothing
             # `:new` throws on a `UnionAll` or `Union` rep that is only `==` to `rt` (#61323)
-            nothrow = isconcretedispatch(rt) && isconstType(widenconst(argtype))
+            nothrow = isconcretedispatch(rt) && widenconst(argtype) <: DataType
             @assert nargs ≤ fcount "malformed :new expression" # syntactically enforced by the front-end
             ats = Vector{Any}(undef, nargs)
             local anyrefine = false
@@ -3566,7 +3566,7 @@ function abstract_eval_splatnew(interp::AbstractInterpreter, e::Expr, sstate::St
     argtype = abstract_eval_value(interp, e.args[1], sstate, sv)
     rt, isexact = instanceof_tfunc(argtype, true)
     # `:splatnew` throws on a `UnionAll` or `Union` rep that is only `==` to `rt` (#61323)
-    isexact = isexact && isconstType(widenconst(argtype))
+    isexact = isexact && widenconst(argtype) <: DataType
     nothrow = false
     if length(e.args) == 2 && isconcretedispatch(rt) && !ismutabletype(rt)
         at = abstract_eval_value(interp, e.args[2], sstate, sv)

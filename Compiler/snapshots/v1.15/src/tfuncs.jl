@@ -1310,7 +1310,9 @@ end
                 return Type{svsuper}
             end
             if isTypeDataType(sv) && isa(name, Const)
-                nv = _getfield_fieldindex(DataType, name)::Int
+                nv = _getfield_fieldindex(DataType, name)
+                # neither a `Symbol` nor an `Int`, so the access throws for any rep
+                nv === nothing && return Bottom
                 if nv == DATATYPE_NAME_FIELDINDEX
                     # N.B. This only works for fields that do not depend on type
                     # parameters (which we do not know here).
