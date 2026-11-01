@@ -291,18 +291,20 @@ end
             assert_no_binding(res, :global, "y")
         end
 
-        jleval("""
-            @kwdef mutable struct KwdefAtomicFields
-                @atomic a::Int
-                (@atomic b::Int) = 2
-                Base.@atomic c
-                d::Int = 4
+        @static if VERSION >= v"1.14-"
+            jleval("""
+                @kwdef mutable struct KwdefAtomicFields
+                    @atomic a::Int
+                    (@atomic b::Int) = 2
+                    Base.@atomic c
+                    d::Int = 4
+                end
+                """)
+            let T = lowering_module.KwdefAtomicFields
+                @test all(i -> Base.isfieldatomic(T, i), 1:3)
+                x = T(; a = 1, c = 3)
+                @test ((@atomic x.a), (@atomic x.b), (@atomic x.c), x.d) == (1, 2, 3, 4)
             end
-            """)
-        let T = lowering_module.KwdefAtomicFields
-            @test all(i -> Base.isfieldatomic(T, i), 1:3)
-            x = T(; a = 1, c = 3)
-            @test ((@atomic x.a), (@atomic x.b), (@atomic x.c), x.d) == (1, 2, 3, 4)
         end
     end
 end
