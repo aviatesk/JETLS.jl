@@ -10,6 +10,10 @@ include("jsjl-utils.jl")
 
 struct LongTypeNameForInlayHintTruncation end
 
+mutable struct AtomicFieldForInlayHint
+    @atomic x::Int
+end
+
 struct ThrowingShowForInlayHint end
 Base.show(::IO, ::ThrowingShowForInlayHint) = error("show failed")
 
@@ -849,6 +853,20 @@ end
             code = "lazy\"hello\""
             expected = "lazy\"hello\"::LazyString"
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
+        end
+
+        @testset "@atomic" begin
+            code = """
+                function add_atomic!(a::AtomicFieldForInlayHint, v::Int)
+                    @atomic a.x += v
+                end
+                """
+            expected = """
+                function add_atomic!(a::AtomicFieldForInlayHint, v::Int)::$Int
+                    (@atomic (a::AtomicFieldForInlayHint).x += v::$Int)::$Int
+                end
+                """
+            @test apply_inlay_hints(code, get_type_inlay_hints(code, @__MODULE__)) == expected
         end
     end
 
