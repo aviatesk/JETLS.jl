@@ -1183,7 +1183,7 @@ end
                 """
             expected = """
                 function f(b::Bool, x::Int)::$Int
-                    return (b ? x::$Int : 0)::$Int
+                    return (b::Bool ? x::$Int : 0)::$Int
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1200,7 +1200,7 @@ end
                 """
             expected = """
                 function f(b::Bool)::$Int
-                    return if b; 1 else 2 end::$Int
+                    return if b::Bool; 1 else 2 end::$Int
                 end
                 """
             @test apply_inlay_hints(code, get_type_inlay_hints(code)) == expected
@@ -1222,9 +1222,9 @@ end
                 """
             expected = """
                 function f(a::Bool, b::Bool)::Union{Nothing, $Int, String}
-                    return if a
+                    return if a::Bool
                         1
-                    elseif b
+                    elseif b::Bool
                         "x"
                     else
                         nothing
@@ -1270,8 +1270,8 @@ end
                 """
             expected = """
                 function g(b::Bool, c::Bool)::Union{Nothing, $Int, String}
-                    out = if b
-                        return if c; 1; else; "x"; end::Union{$Int, String}
+                    out = if b::Bool
+                        return if c::Bool; 1; else; "x"; end::Union{$Int, String}
                     end::Nothing
                     out::Nothing
                 end

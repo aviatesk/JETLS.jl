@@ -255,7 +255,10 @@ function cursor_bindings(
     scope_id = innermost_scope_id(ctx3, offset)
     while scope_id != 0
         scope = ctx3.scopes[scope_id]
-        for id in sort!(collect(values(scope.vars)))
+        ids = collect(values(scope.vars))
+        # Implicit globals are not declared in any scope, so they are offered at the top scope
+        scope.parent_id == 0 && union!(ids, keys(global_nodes))
+        for id in sort!(ids)
             binfo = ctx3.bindings.info[id]
             binfo.name in seen && continue
             node = binfo.kind === :global ?
@@ -581,23 +584,22 @@ function prepare_inert_template(
 end
 
 function resolve_inert_tree(
-        context_module::Module, world::UInt, inert_tree::SyntaxTree;
+        context_module::Module, world::UInt, content::SyntaxTree;
         parameters::Dict{String,SyntaxTree} = Dict{String,SyntaxTree}(),
         hard_scope::Bool = false,
         soft_scope::Bool = false,
         preserve_nested_interpolations::Bool = false
     )
-    JS.numchildren(inert_tree) >= 1 || return nothing
     template, placeholder_name = prepare_inert_template(
-        inert_tree[1]; parameters, preserve_nested_interpolations)
+        content; parameters, preserve_nested_interpolations)
     input = if hard_scope || !isempty(parameters)
         parameter_nodes = SyntaxList()
         for (name, source) in parameters
             parameter = newleaf(source, :identifier, name)
             push!(parameter_nodes, parameter)
         end
-        parameter_list = JL.@ast(_, inert_tree, [:tuple parameter_nodes...])
-        JL.@ast(_, inert_tree, [:function parameter_list template])
+        parameter_list = JL.@ast(_, content, [:tuple parameter_nodes...])
+        JL.@ast(_, content, [:function parameter_list template])
     else
         template
     end
@@ -608,9 +610,64 @@ function resolve_inert_tree(
         return nothing
     end
     argument_remap = synthetic_parameter_remap(ires.ctx3, ires.st3, parameters)
-    source_range = JS.byte_range(inert_tree)
+    source_range = JS.byte_range(content)
     return InertResolution(
         ires.ctx3, ires.st3, argument_remap, placeholder_name, source_range)
+end
+
+# JuliaLowering expands a quote into code constructing its `Expr`: `copyast` of the
+# whole `Expr`, or `Core._expr`/`Core.QuoteNode` calls when it has interpolations.
+function is_quote_construction(st::SyntaxTree)
+    k = JS.head(st)
+    k === :copyast && return true
+    k === :call && JS.numchildren(st) >= 1 || return false
+    callee = st[1]
+    JS.head(callee) === :core || return false
+    # Until desugaring, the name is held in an `:identifier` child
+    name = JS.is_leaf(callee) ? callee :
+        JS.numchildren(callee) == 1 ? callee[1] : return false
+    return name.value in ("_expr", "QuoteNode")
+end
+
+"""
+    inert_content(st3::SyntaxTree) -> Union{Nothing,SyntaxTree}
+
+Return the source tree of the code quoted by `st3`, if `st3` is an `:inert` or
+`:syntaxinert` node or code constructing a quoted `Expr`. The quoted code within the
+latter has no source locations, so it is taken from its provenance instead.
+"""
+function inert_content(st3::SyntaxTree)
+    if JS.head(st3) in (:inert, :syntaxinert)
+        return JS.numchildren(st3) >= 1 ? st3[1] : nothing
+    elseif is_quote_construction(st3)
+        for source in BS.provenance(st3)
+            is_quote_construction(source) || return source
+        end
+    end
+    return nothing
+end
+
+# Don't traverse into `:inert`, `:syntaxinert` and `copyast`, which hold only quoted data.
+# Quote construction calls are traversed into since their interpolated arguments are
+# ordinary code, which may contain other quotes.
+inert_traversal_next(st3::SyntaxTree) =
+    JS.head(st3) in (:inert, :syntaxinert, :copyast) ? traversal_no_recurse : nothing
+
+# Find the code quoted at `range` in the provenance of `st`, for quote construction code
+# whose own provenance is trimmed, e.g. in generated function bodies.
+function find_quote_content(st::SyntaxTree, range::UnitRange{Int})
+    for source in BS.provenance(st)
+        content = traverse(source) do node::SyntaxTree
+            range ⊆ JS.byte_range(node) || return traversal_no_recurse
+            if (JS.head(node) === :quote && JS.numchildren(node) == 1 &&
+                    JS.byte_range(node[1]) == range)
+                return TraversalReturn(node[1])
+            end
+            return nothing
+        end
+        content === nothing || return content
+    end
+    return nothing
 end
 
 function contains_syntaxunquote(st::SyntaxTree)
@@ -629,7 +686,7 @@ function collect_generated_inert_resolutions(
         ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, world::UInt
     )
     resolutions = InertResolution[]
-    seen = Set{Tuple{Symbol,UnitRange{Int}}}()
+    seen = Set{Tuple{Bool,UnitRange{Int}}}()
     method_ids = generated_method_ids(ctx3, st3)
     isempty(method_ids) && return resolutions
     traverse(st3) do st3′::SyntaxTree
@@ -640,18 +697,22 @@ function collect_generated_inert_resolutions(
         context_module isa Module || return traversal_no_recurse
         traverse(lambda) do node::SyntaxTree
             is_import_eval_call(node) && return traversal_no_recurse
-            JS.head(node) in (:inert, :syntaxinert) || return nothing
             if JS.head(node) === :syntaxinert && contains_syntaxunquote(node)
                 return nothing
             end
-            key = (JS.head(node), JS.byte_range(node))
-            key in seen && return traversal_no_recurse
+            # The generated body has its provenance trimmed
+            content = @something(inert_content(node),
+                is_quote_construction(node) ?
+                    find_quote_content(st3′, JS.byte_range(node)) : nothing,
+                return inert_traversal_next(node))
+            key = (JS.head(node) === :syntaxinert, JS.byte_range(content))
+            key in seen && return inert_traversal_next(node)
             push!(seen, key)
-            resolution = resolve_inert_tree(context_module, world, node;
+            resolution = resolve_inert_tree(context_module, world, content;
                 parameters=args, hard_scope=true,
                 preserve_nested_interpolations=true)
             resolution === nothing || push!(resolutions, resolution)
-            return traversal_no_recurse
+            return inert_traversal_next(node)
         end
         return traversal_no_recurse
     end
@@ -822,14 +883,14 @@ function select_inert_target_binding(
     end
     inside_generated && return nothing
 
-    inert_tree = @something(
-        enclosing_inert_tree(st3, offset),
-        offset > 0 ? enclosing_inert_tree(st3, offset-1) : nothing,
+    content = @something(
+        enclosing_inert_content(st3, offset),
+        offset > 0 ? enclosing_inert_content(st3, offset-1) : nothing,
         return nothing)
-    range = JS.byte_range(inert_tree)
+    range = JS.byte_range(content)
     policy = inert_resolution_policy(context_module, world, st0, range)
     resolution = @something resolve_inert_tree(
-        context_module, world, inert_tree;
+        context_module, world, content;
         hard_scope=policy === :macro, soft_scope) return nothing
     binding = @something resolved_binding_at(resolution, offset) return nothing
     binfo = JL.get_binding(resolution.ctx3, binding)
@@ -839,21 +900,21 @@ function select_inert_target_binding(
     return (; ctx3=resolution.ctx3, st3=resolution.st3, st0, binding)
 end
 
-# Find the innermost `:inert` or `:syntaxinert` node in `st3` whose byte
-# range contains `offset`. Used to run fresh scope resolution on just that inert
-# subtree.
-function enclosing_inert_tree(st3::SyntaxTree, offset::Int)
+# Find the innermost `inert_content` in `st3` whose byte range contains `offset`.
+# Used to run fresh scope resolution on just that quoted code.
+function enclosing_inert_content(st3::SyntaxTree, offset::Int)
     best = Ref{Union{Nothing,SyntaxTree}}(nothing)
     best_len = Ref(typemax(Int))
     traverse(st3) do st::SyntaxTree
-        JS.head(st) in (:inert, :syntaxinert) || return nothing
-        offset in JS.byte_range(st) || return nothing
-        len = length(JS.byte_range(st))
+        next = inert_traversal_next(st)
+        content = @something inert_content(st) return next
+        offset in JS.byte_range(content) || return next
+        len = length(JS.byte_range(content))
         if len < best_len[]
-            best[] = st
+            best[] = content
             best_len[] = len
         end
-        return nothing
+        return next
     end
     return best[]
 end

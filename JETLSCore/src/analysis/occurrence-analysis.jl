@@ -756,23 +756,23 @@ function collect_inert_global_occurrences!(
         collect_resolved_inert_globals!(occurrences, resolution, world)
     end
 
-    seen = Set{Tuple{Symbol,UnitRange{Int}}}()
-    traverse(st3) do inert_tree::SyntaxTree
-        is_import_eval_call(inert_tree) && return traversal_no_recurse
-        JS.head(inert_tree) in (:inert, :syntaxinert) || return nothing
-        JS.numchildren(inert_tree) >= 1 || return nothing
-        range = JS.byte_range(inert_tree)
-        key = (JS.head(inert_tree), range)
-        key in seen && return traversal_no_recurse
+    seen = Set{Tuple{Bool,UnitRange{Int}}}()
+    traverse(st3) do node::SyntaxTree
+        is_import_eval_call(node) && return traversal_no_recurse
+        next = inert_traversal_next(node)
+        content = @something inert_content(node) return next
+        range = JS.byte_range(content)
+        key = (JS.head(node) === :syntaxinert, range)
+        key in seen && return next
         push!(seen, key)
         # Generated ranges were handled above with their dedicated argument scope.
-        is_generated_inert_range(context_module, world, st0, range) && return traversal_no_recurse
+        is_generated_inert_range(context_module, world, st0, range) && return next
         policy = inert_resolution_policy(context_module, world, st0, range)
-        policy === :unresolved && return traversal_no_recurse
+        policy === :unresolved && return next
         hard_scope = policy === :macro
-        resolution = resolve_inert_tree(context_module, world, inert_tree; hard_scope, soft_scope)
+        resolution = resolve_inert_tree(context_module, world, content; hard_scope, soft_scope)
         resolution === nothing || collect_resolved_inert_globals!(occurrences, resolution, world)
-        return nothing
+        return next
     end
     return occurrences
 end
