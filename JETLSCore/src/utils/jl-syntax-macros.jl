@@ -1245,25 +1245,80 @@ function _atomic_recovery(ctx::BS.MacroContext, args::SyntaxTree...)
     return JL.@ast(ctx, mc, [:block args...])
 end
 
+# Base leaves invalid orderings to the runtime, which throws `ConcurrencyViolationError`, so
+# the literal ones are checked here. `:not_atomic` is not checked, since the runtime accepts
+# it for non-atomic fields.
+const _ATOMIC_ORDERINGS = ( # from the weakest
+    "unordered", "monotonic", "acquire", "release", "acquire_release",
+    "sequentially_consistent")
+const _ATOMIC_LOAD_ORDERINGS = (
+    "unordered", "monotonic", "acquire", "sequentially_consistent")
+const _ATOMIC_STORE_ORDERINGS = (
+    "unordered", "monotonic", "release", "sequentially_consistent")
+const _ATOMIC_RMW_ORDERINGS = (
+    "monotonic", "acquire", "release", "acquire_release", "sequentially_consistent")
+
+# Return the name of `order` if it is a literal ordering valid for `orderings`
+function _check_atomic_ordering(
+        order::SyntaxTree, orderings::Tuple{Vararg{String}}, operation::String,
+        macroname::String
+    )
+    (JS.head(order) === :inert && JS.numchildren(order) == 1) || return nothing
+    name = @something get_name_val(order[1]) return nothing
+    (name == "not_atomic" || name in orderings) && return name
+    expected = join(("`:$o`" for o in orderings), ", ", ", or ")
+    push_macro_error!(order,
+        "`$macroname`: invalid atomic ordering `:$name` for $operation; expected $expected")
+    return nothing
+end
+
+# The failure of `@atomicreplace` and `@atomiconce` is a load, whose ordering can't be
+# stronger than the success ordering. With a single ordering, it is used for both.
+function _check_atomic_cas_orderings(
+        success_order::SyntaxTree, fail_order::SyntaxTree, macroname::String
+    )
+    success = _check_atomic_ordering(
+        success_order, _ATOMIC_RMW_ORDERINGS, "a read-modify-write", macroname)
+    if fail_order === success_order
+        success === nothing || _check_atomic_ordering(fail_order, _ATOMIC_LOAD_ORDERINGS,
+            "the failure case, which also uses this ordering", macroname)
+        return nothing
+    end
+    failure = _check_atomic_ordering(
+        fail_order, _ATOMIC_LOAD_ORDERINGS, "the failure case", macroname)
+    (success === nothing || failure === nothing) && return nothing
+    success_rank = @something findfirst(==(success), _ATOMIC_ORDERINGS) return nothing
+    failure_rank = @something findfirst(==(failure), _ATOMIC_ORDERINGS) return nothing
+    if failure_rank > success_rank
+        push_macro_error!(fail_order,
+            "`$macroname`: failure ordering `:$failure` is stronger than the success ordering `:$success`")
+    end
+    return nothing
+end
+
 # Mirrors `make_atomic(order, ex)` in Base. Returns `nothing` when `ex` is not an atomic
 # operation, with the issue reported.
 function _make_atomic(ctx::BS.MacroContext, order::SyntaxTree, ex::SyntaxTree)
     mc = ctx.macrocall::SyntaxTree
     k = JS.head(ex)
     if _is_atomic_property(ex)
+        _check_atomic_ordering(order, _ATOMIC_LOAD_ORDERINGS, "a load", "@atomic")
         return JL.@ast(ctx, mc, [:call
             [:top "getproperty"::identifier] ex[1] ex[2] order])
     elseif k === :call && JS.numchildren(ex) == 3
         return _make_atomic_modify(ctx, order, ex[2], ex[1], ex[3])
     elseif _is_atomic_index(ex)
+        _check_atomic_ordering(order, _ATOMIC_LOAD_ORDERINGS, "a load", "@atomic")
         return JL.@ast(ctx, mc, [:call
             [:top "getindex_atomic"::identifier] ex[1] order _atomic_indices(ex)...])
     elseif k === :(=) && JS.numchildren(ex) == 2
         lhs, rhs = ex[1], ex[2]
         if _is_atomic_property(lhs)
+            _check_atomic_ordering(order, _ATOMIC_STORE_ORDERINGS, "a store", "@atomic")
             return JL.@ast(ctx, mc, [:call
                 [:top "setproperty!"::identifier] lhs[1] lhs[2] rhs order])
         elseif _is_atomic_index(lhs)
+            _check_atomic_ordering(order, _ATOMIC_STORE_ORDERINGS, "a store", "@atomic")
             return JL.@ast(ctx, mc, [:call
                 [:top "setindex_atomic!"::identifier]
                 lhs[1] order rhs _atomic_indices(lhs)...])
@@ -1287,6 +1342,10 @@ function _make_atomic_modify(
         a2::SyntaxTree
     )
     mc = ctx.macrocall::SyntaxTree
+    if _is_atomic_property(a1) || _is_atomic_index(a1)
+        _check_atomic_ordering(
+            order, _ATOMIC_RMW_ORDERINGS, "a read-modify-write", "@atomic")
+    end
     if _is_atomic_property(a1)
         return JL.@ast(ctx, mc, [:call
             [:top "modifyproperty!"::identifier] a1[1] a1[2] op a2 order])
@@ -1307,6 +1366,10 @@ function _make_atomicswap(ctx::BS.MacroContext, order::SyntaxTree, ex::SyntaxTre
         return nothing
     end
     lhs, val = ex[1], ex[2]
+    if _is_atomic_property(lhs) || _is_atomic_index(lhs)
+        _check_atomic_ordering(
+            order, _ATOMIC_RMW_ORDERINGS, "a read-modify-write", "@atomicswap")
+    end
     if _is_atomic_property(lhs)
         return JL.@ast(ctx, mc, [:call
             [:top "swapproperty!"::identifier] lhs[1] lhs[2] val order])
@@ -1330,6 +1393,9 @@ function _make_atomicreplace(
         SyntaxTree[old_new[2], old_new[3]]
     else
         SyntaxTree[JL.@ast(ctx, old_new, [:... [:(::) old_new [:top "Pair"::identifier]]])]
+    end
+    if _is_atomic_property(ex) || _is_atomic_index(ex)
+        _check_atomic_cas_orderings(success_order, fail_order, "@atomicreplace")
     end
     if _is_atomic_property(ex)
         return JL.@ast(ctx, mc, [:call
@@ -1355,6 +1421,9 @@ function _make_atomiconce(
         return nothing
     end
     lhs, val = ex[1], ex[2]
+    if _is_atomic_property(lhs) || _is_atomic_index(lhs)
+        _check_atomic_cas_orderings(success_order, fail_order, "@atomiconce")
+    end
     if _is_atomic_property(lhs)
         return JL.@ast(ctx, mc, [:call
             [:top "setpropertyonce!"::identifier]
