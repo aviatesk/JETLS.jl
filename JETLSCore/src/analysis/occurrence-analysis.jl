@@ -15,7 +15,7 @@ end
 
 """
     compute_binding_occurrences(
-            ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, world::UInt;
+            ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, st0::SyntaxTree, world::UInt;
             include_global_bindings::Bool = false,
             generated_resolutions::Union{Nothing,Vector{InertResolution}} = nothing
         ) -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}}
@@ -35,6 +35,8 @@ information:
 # Arguments
 - `ctx3`: Variable analysis context from JuliaLowering containing binding information
 - `st3`: Lowered syntax tree (after scope resolution) to analyze
+- `st0`: Syntax tree that `st3` is lowered from, which provides the code quoted in
+  generated function bodies
 - `include_global_bindings`: Whether to include global bindings in the result
 - `generated_resolutions`: Optional precomputed generated inert resolutions. When
   provided, they are reused instead of lowering generated inert templates again.
@@ -52,7 +54,7 @@ a set of `BindingOccurrence` objects that record where and how the binding appea
     variable diagnostics or comprehensive binding analysis.
 """
 function compute_binding_occurrences(
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, world::UInt;
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, st0::SyntaxTree, world::UInt;
         include_global_bindings::Bool = false,
         generated_resolutions::Union{Nothing,Vector{InertResolution}} = nothing
     )
@@ -86,7 +88,7 @@ function compute_binding_occurrences(
     compute_binding_occurrences!(occurrences, ctx3, st3; include_global_bindings)
 
     generated_resolutions = if generated_resolutions === nothing
-        collect_generated_inert_resolutions(ctx3, st3, world)
+        collect_generated_inert_resolutions(ctx3, st3, st0, world)
     else
         generated_resolutions
     end
@@ -168,7 +170,7 @@ function record_generated_inert_argument_uses!(
     for resolution in generated_resolutions
         isempty(resolution.argument_remap) && continue
         resolved_occurrences = compute_binding_occurrences(
-            resolution.ctx3, resolution.st3, world)
+            resolution.ctx3, resolution.st3, resolution.st0, world)
         for (resolved_binfo, source) in resolution.argument_remap
             source_binfo = JL.get_binding(ctx3, source)
             haskey(occurrences, source_binfo) || continue
@@ -504,21 +506,23 @@ function compute_full_binding_occurrences(
         # TODO: This won't be necessary once JuliaLowering can preserve precise
         # source locations for old macro-expanded code.
         st0′ = remove_macrocalls(context_module, world, st0; strip_static=true)
-        (; ctx3, st3) = try
+        res = try
             jl_lower_for_scope_resolution(context_module, world, st0′; soft_scope)
         catch err
             is_user_lowering_error(err) || report_lowering_bug(err)
             return nothing
         end
-        generated_resolutions = collect_generated_inert_resolutions(ctx3, st3, world)
-        occs = compute_binding_occurrences(ctx3, st3, world;
+        (; ctx3, st3) = res
+        generated_resolutions = collect_generated_inert_resolutions(
+            ctx3, st3, res.st0, world)
+        occs = compute_binding_occurrences(ctx3, st3, res.st0, world;
             include_global_bindings=true, generated_resolutions)
         collect_qualified_global_occurrences!(occs, ctx3, st3, world)
         collect_struct_inner_constructor_occurrences!(occs, ctx3, st0)
         collect_macrocall_occurrences!(
             occs, context_module, world, st0; soft_scope)
         # Add generated-body and policy-approved inert occurrences.
-        collect_inert_global_occurrences!(occs, st3, st0, context_module, world,
+        collect_inert_global_occurrences!(occs, res.st0, context_module, world,
             generated_resolutions; soft_scope)
         binding_occurrences = occs
     end
@@ -661,8 +665,7 @@ end
 # whether it is the whole statement or nested in a block (`if`/`begin`/`@static if`/…).
 # Lowering doesn't surface these declarations — `export`/`public` collapse their names
 # into a runtime call argument, and `import`/`using` desugar their module paths into
-# `:inert` calls that `collect_inert_global_occurrences!` skips — so collect them from
-# the source tree instead:
+# `:inert` arguments of runtime calls — so collect them from the source tree instead:
 # - `export foo`/`public foo`: `foo` as a `:use` of the surrounding module's global.
 # - `using M: foo`/`import M.foo`/`foo as bar`: the local name (`foo`/`bar`) as a `:decl`.
 # `:module` (a distinct binding scope) and `:quote` (quoted, non-executed code) are
@@ -722,7 +725,8 @@ function collect_resolved_inert_globals!(
         resolution::InertResolution, world::UInt
     )
     resolved_occurrences = compute_binding_occurrences(
-        resolution.ctx3, resolution.st3, world; include_global_bindings=true)
+        resolution.ctx3, resolution.st3, resolution.st0, world;
+        include_global_bindings=true)
     collect_qualified_global_occurrences!(
         resolved_occurrences, resolution.ctx3, resolution.st3, world)
     for (binfo, boccs) in resolved_occurrences
@@ -741,13 +745,13 @@ end
 """
     collect_inert_global_occurrences!
 
-Collect globals from generated bodies and inert ranges accepted by
+Collect globals from generated bodies and the code quoted in `st0` accepted by
 [`inert_resolution_policy`](@ref). This keeps the workspace occurrence index in
 sync with target selection for references and rename.
 """
 function collect_inert_global_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
-        st3::SyntaxTree, st0::SyntaxTree, context_module::Module, world::UInt,
+        st0::SyntaxTree, context_module::Module, world::UInt,
         generated_resolutions::Vector{InertResolution};
         soft_scope::Bool = false,
     )
@@ -756,23 +760,16 @@ function collect_inert_global_occurrences!(
         collect_resolved_inert_globals!(occurrences, resolution, world)
     end
 
-    seen = Set{Tuple{Bool,UnitRange{Int}}}()
-    traverse(st3) do node::SyntaxTree
-        is_import_eval_call(node) && return traversal_no_recurse
-        next = inert_traversal_next(node)
-        content = @something inert_content(node) return next
+    foreach_quoted_code(context_module, world, st0) do content::SyntaxTree
         range = JS.byte_range(content)
-        key = (JS.head(node) === :syntaxinert, range)
-        key in seen && return next
-        push!(seen, key)
         # Generated ranges were handled above with their dedicated argument scope.
-        is_generated_inert_range(context_module, world, st0, range) && return next
+        is_generated_inert_range(context_module, world, st0, range) && return nothing
         policy = inert_resolution_policy(context_module, world, st0, range)
-        policy === :unresolved && return next
+        policy === :unresolved && return nothing
         hard_scope = policy === :macro
         resolution = resolve_inert_tree(context_module, world, content; hard_scope, soft_scope)
         resolution === nothing || collect_resolved_inert_globals!(occurrences, resolution, world)
-        return next
+        return nothing
     end
     return occurrences
 end

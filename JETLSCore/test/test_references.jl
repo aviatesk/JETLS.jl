@@ -455,6 +455,25 @@ end
                 @test length(find_references(clean_code, pos)) == 2
             end
         end
+
+        # Splat interpolation doesn't hide the other names in the quote.
+        for code in ("""
+                global │helper│ = nothing
+                function f(│args│)
+                    return :(│helper│(\$(│args│...)))
+                end
+                """, """
+                global │helper│ = nothing
+                macro m(│args│...)
+                    return :(│helper│(\$(│args│...)))
+                end
+                """)
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
+            @test length(positions) == 8
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
     end
 
     @testset "@generated function references" begin

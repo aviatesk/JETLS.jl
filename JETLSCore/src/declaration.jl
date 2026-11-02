@@ -78,7 +78,7 @@ function find_declaration(
             locations = find_global_binding_declarations(server, uri, binfo)
         else
             locations = find_local_binding_declarations(
-                state, uri, fi, ctx3, st3, binfo, world)
+                state, uri, fi, ctx3, st3, binding_result.st0, binfo, world)
         end
         isempty(locations) || return locations, binding
     end
@@ -110,10 +110,10 @@ end
 
 function find_local_binding_declarations(
         state::ServerState, uri::URI, fi::FileInfo,
-        ctx3, st3, binfo::JL.BindingInfo, world::UInt,
+        ctx3, st3, st0, binfo::JL.BindingInfo, world::UInt,
     )
     locations = Location[]
-    binding_occurrences = compute_binding_occurrences(ctx3, st3, world)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, st0, world)
     haskey(binding_occurrences, binfo) || return locations
     seen_locations = Set{Location}()
     for occurrence in binding_occurrences[binfo]

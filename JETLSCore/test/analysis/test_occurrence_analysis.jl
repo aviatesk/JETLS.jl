@@ -34,8 +34,9 @@ function with_binding_occurrences(
     if remove_macrocalls
         st0 = JETLSCore.remove_macrocalls(context_module, world, st0)
     end
-    (; ctx3, st3) = JETLSCore.jl_lower_for_scope_resolution(context_module, world, st0)
-    binding_occurrences = JETLSCore.compute_binding_occurrences(ctx3, st3, world)
+    res = JETLSCore.jl_lower_for_scope_resolution(context_module, world, st0)
+    binding_occurrences = JETLSCore.compute_binding_occurrences(
+        res.ctx3, res.st3, res.st0, world)
     callback(binding_occurrences)
 end
 
