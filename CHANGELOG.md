@@ -71,14 +71,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed false [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports on `@atomic` fields of a `@kwdef` struct used in the default values of later fields:
-  ```julia
-  @kwdef mutable struct Counter
-      @atomic count::Int
-      limit::Int = count + 10  # `count` was reported as `lowering/undef-global-var`
-  end
-  ```
-
 - Fixed diagnostics such as [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var), [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var), and [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) not being reported for the code within `@atomic`, `@atomicswap`, `@atomicreplace`, and `@atomiconce`, where hover, inlay hints, and other features that show inferred types did not work either:
   ```julia
   function add!(c::Counter, n::Int)
@@ -87,6 +79,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   Invalid uses of these macros are now also reported at the invalid part rather than at the whole macro call.
   This includes memory orderings written as literals that are unknown or invalid for the operation, e.g. `@atomic :release c.count` (`:release` is invalid for a load), which would throw `ConcurrencyViolationError` at runtime.
+
+- Fixed false [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports on `@atomic` fields of a `@kwdef` struct used in the default values of later fields:
+  ```julia
+  @kwdef mutable struct Counter
+      @atomic count::Int
+      limit::Int = count + 10  # `count` was reported as `lowering/undef-global-var`
+  end
+  ```
 
 ## 2026-10-26
 
