@@ -81,7 +81,7 @@ function assert_binding_provenance(
         world::UInt = Base.get_world_counter()
     )
     binding_occurrences = JETLSCore.compute_binding_occurrences(
-        res.ctx3, res.st3, world; include_global_bindings=true)
+        res.ctx3, res.st3, res.st0, world; include_global_bindings=true)
     binfo = nothing
     for (b, _) in binding_occurrences
         if b.kind === kind && b.name == name
@@ -122,7 +122,7 @@ function assert_no_binding(
         world::UInt = Base.get_world_counter()
     )
     binding_occurrences = JETLSCore.compute_binding_occurrences(
-        res.ctx3, res.st3, world; include_global_bindings=true)
+        res.ctx3, res.st3, res.st0, world; include_global_bindings=true)
     found = any(binding_occurrences) do (b, _)
         b.kind === kind && b.name == name
     end
@@ -1783,7 +1783,8 @@ end
             local_result = assert_binding_provenance(res, :local, "i")
             if local_result !== nothing
                 world = Base.get_world_counter()
-                occurrences = JETLSCore.compute_binding_occurrences(res.ctx3, res.st3, world)
+                occurrences = JETLSCore.compute_binding_occurrences(
+                    res.ctx3, res.st3, res.st0, world)
                 desc_range = source_range(code, "\"case: \$(i)\"")
                 @test any(occurrences[local_result[1]]) do occurrence
                     occurrence.kind === :use && JS.byte_range(occurrence.tree) ⊆ desc_range
