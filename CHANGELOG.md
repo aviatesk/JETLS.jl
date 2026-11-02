@@ -86,6 +86,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
   Invalid uses of these macros are now also reported at the invalid part rather than at the whole macro call.
+  This includes memory orderings written as literals that are unknown or invalid for the operation, e.g. `@atomic :release c.count` (`:release` is invalid for a load), which would throw `ConcurrencyViolationError` at runtime.
 
 ## 2026-10-26
 

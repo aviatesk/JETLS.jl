@@ -1377,6 +1377,56 @@ end
         end
     end
 
+    @testset "orderings" begin
+        for (code, node, msg) in (
+                ("@atomic :relaxed a.x", ":relaxed",
+                 "`@atomic`: invalid atomic ordering `:relaxed` for a load; expected `:unordered`, `:monotonic`, `:acquire`, or `:sequentially_consistent`"),
+                ("@atomic :release a.x", ":release", "`:release` for a load"),
+                ("@atomic :acquire_release xs[i]", ":acquire_release", "for a load"),
+                ("@atomic :acquire a.x = v", ":acquire", "`:acquire` for a store"),
+                ("@atomic :acquire_release xs[i] = v", ":acquire_release", "for a store"),
+                ("@atomic :unordered a.x += v", ":unordered", "for a read-modify-write"),
+                ("@atomic :unordered a.x max v", ":unordered", "for a read-modify-write"),
+                ("@atomic :unordered max(xs[i], v)", ":unordered", "for a read-modify-write"),
+                ("@atomicswap :unordered a.x = v", ":unordered",
+                 "`@atomicswap`: invalid atomic ordering `:unordered` for a read-modify-write"),
+                ("@atomicreplace :unordered :monotonic a.x e => d", ":unordered",
+                 "for a read-modify-write"),
+                ("@atomicreplace :sequentially_consistent :release a.x e => d", ":release",
+                 "`:release` for the failure case;"),
+                ("@atomicreplace :monotonic :acquire xs[i] e => d", ":acquire",
+                 "`@atomicreplace`: failure ordering `:acquire` is stronger than the success ordering `:monotonic`"),
+                ("@atomicreplace :release a.x e => d", ":release",
+                 "for the failure case, which also uses this ordering"),
+                ("@atomiconce :acquire_release a.x = v", ":acquire_release",
+                 "for the failure case, which also uses this ordering"),
+                ("@atomiconce :acquire :sequentially_consistent xs[i] = v",
+                 ":sequentially_consistent", "stronger than the success ordering `:acquire`"),
+            )
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test JS.sourcetext(d.node) == node
+                @test occursin(msg, d.msg)
+            end
+        end
+
+        # `:not_atomic` is valid for non-atomic fields, and non-literal orderings are not checked
+        for code in ("@atomic :acquire a.x", "@atomic :unordered xs[i]",
+                     "@atomic :release a.x = v", "@atomic :acquire_release a.x += v",
+                     "@atomic :monotonic a.x max v", "@atomicswap :acquire xs[i] = v",
+                     "@atomicreplace :release :acquire a.x e => d",
+                     "@atomicreplace :acquire a.x e => d",
+                     "@atomiconce :sequentially_consistent :unordered xs[i] = v",
+                     "@atomic :not_atomic a.x", "@atomic order a.x = v",
+                     "@atomicreplace so fo a.x e => d")
+            @test isempty(collect_macro_diagnostics(() -> jlexpand(code)))
+        end
+    end
+
     @testset "binding resolution preserves provenance" begin
         let res = jlresolve("@atomic ooo aaa.x += vvv")
             assert_binding_provenance(res, :global, "ooo")
