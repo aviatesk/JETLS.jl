@@ -474,6 +474,19 @@ end
                 @test length(find_references(clean_code, pos)) == 2
             end
         end
+
+        # `@eval` in quoted code isn't expanded yet, so it doesn't quote the quote
+        # interpolated into it.
+        let code = """
+            global │helper│ = nothing
+            f() = :(@eval \$(:(│helper│())))
+            """
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                @test length(find_references(clean_code, pos)) == 2
+            end
+        end
     end
 
     @testset "@generated function references" begin

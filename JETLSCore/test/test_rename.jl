@@ -510,6 +510,46 @@ end
                 end
             end
         end
+
+        # The generated branch of an optionally generated function is a generator body.
+        let code = """
+            function foo(│x│)
+                if @generated
+                    return :(│x│ + 1)
+                else
+                    return │x│ + 1
+                end
+            end
+            """
+            (; positions, furi, rename_binding) = local_rename_testcase(server, code, 6, @__MODULE__)
+            for pos in positions
+                (; result, error) = rename_binding(pos, "y")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 3
+                    @test all(edit -> edit.newText == "y", edits)
+                end
+            end
+        end
+
+        # Default values in the signature are not part of the generator body.
+        let code = """
+            @generated function foo(│x│, sym=:x)
+                return :(│x│, sym)
+            end
+            """
+            (; positions, furi, rename_binding) = local_rename_testcase(server, code, 4, @__MODULE__)
+            for pos in positions
+                (; result, error) = rename_binding(pos, "y")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 2
+                    @test all(edit -> edit.newText == "y", edits)
+                end
+            end
+        end
     end
 
     @testset "ordinary quote-local rename" begin

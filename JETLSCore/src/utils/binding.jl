@@ -635,8 +635,10 @@ function _foreach_quoted_code(
     end
     quoted = if k in (:quote, :inert)
         nchildren == 1 ? 1 : 0
-    elseif k === :macrocall && nchildren in (3, 4) && is_ateval0(context_module, world, st0)
-        nchildren # `@eval [mod] ex`
+    elseif (k === :macrocall && depth == 0 && nchildren in (3, 4) &&
+            is_ateval0(context_module, world, st0))
+        # `@eval [mod] ex` that is expanded, i.e. not in quoted code
+        nchildren
     else
         0
     end
@@ -734,11 +736,27 @@ function is_code_shaped_quote_range(st0::SyntaxTree, range::UnitRange{Int})
     return false
 end
 
+# The body that the generator of the generated function `st0` runs, if any
+function generated_body0(context_module::Module, world::UInt, st0::SyntaxTree)
+    if JS.head(st0) === :macrocall # `@generated function f(...) ... end`
+        is_generated0(context_module, world, st0) || return nothing
+        def = st0[end]
+        JS.head(def) in (:function, :(=)) && JS.numchildren(def) == 2 || return nothing
+        return def[2]
+    elseif JS.head(st0) === :if # `if @generated ... else ... end`
+        JS.numchildren(st0) >= 2 && is_generated0(context_module, world, st0[1]) ||
+            return nothing
+        return st0[2]
+    end
+    return nothing
+end
+
 function is_generated_inert_range(
         context_module::Module, world::UInt, st0::SyntaxTree, range::UnitRange{Int}
     )
     return any(byte_ancestors(st0, range)) do ancestor
-        is_generated0(context_module, world, ancestor)
+        body = @something generated_body0(context_module, world, ancestor) return false
+        return range ⊆ JS.byte_range(body)
     end
 end
 
