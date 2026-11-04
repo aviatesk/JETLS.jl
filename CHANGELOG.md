@@ -53,6 +53,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed spurious [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) and [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error) diagnostics on a value whose type is not precisely known, such as an untyped argument, after it is passed to a function with a few methods, as if the value could be of any of the argument types of those methods.
+  For example, the following no longer reports a `FieldError` for `Square`:
+  ```julia
+  area(c::Circle) = π * c.r^2
+  area(s::Square) = s.side^2
+  function describe(c)
+      a = area(c)
+      return "r = $(c.r), area = $a"
+  end
+  ```
+
 ## 2026-11-04
 
 - Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)

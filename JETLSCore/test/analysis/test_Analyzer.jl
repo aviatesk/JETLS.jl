@@ -1954,6 +1954,126 @@ end
     end
 end
 
+takes_hasx(h::HasX) = h.x
+int_float_or_string(::Int) = 1
+int_float_or_string(::Float64) = 2
+int_float_or_string(::String) = 3
+int_or_string(::Union{Int,String}) = nothing
+struct AnyBox
+    v::Any
+end
+struct NumberOrNothingBox
+    v::Union{Nothing,Number}
+end
+const JoinableTuples = Union{Float64,Tuple{Union{Int,String}},Tuple{Union{Int,Symbol}}}
+takes_joinable_tuples(::JoinableTuples) = nothing
+also_takes_joinable_tuples(::JoinableTuples) = nothing
+struct AnyAndIntOrNothing
+    x::Any
+    y::Union{Nothing,Int}
+end
+takes_any_and_int(_, ::Int) = nothing
+function check_any_and_int(b::AnyAndIntOrNothing)
+    takes_any_and_int(b.x, (b.x isa Union{Int,Float64} || return; b.y))
+    return takes_int(b.y)
+end
+takes_tuple_or_number(::Union{Tuple{Int},Tuple{String},Float64,Symbol}) = nothing
+takes_mergeable_tuples(::Union{
+    Tuple{Number,Integer},
+    Tuple{Symbol,Union{Int,String}},
+    Tuple{Union{Int,String},Union{Nothing,Int}}}
+) = nothing
+struct MaybeUndefBox
+    k::Bool
+    v::Any
+    MaybeUndefBox(k::Bool) = new(k)
+end
+function check_maybe_undef_box(b::MaybeUndefBox)
+    # makes `b` a `PartialStruct`, so that the refinement by the call below also records
+    # that `v` is defined
+    b.k === true || return nothing
+    int_float_or_string(b.v)
+    isdefined(b, :v) || sin("julia")
+    return nothing
+end
+
+@testset "slot refinements from method signatures" begin
+    # refinements that split a component of the argument type into the argument types of
+    # the matched methods, e.g. `Any` into `Union{HasX,NoX}`, are widened back to that
+    # component
+    for (f, argtypes) in (
+            (h -> (ready(h); h.x), (Any,)),
+            (h -> (ready(h); takes_hasx(h)), (Any,)),
+            (x -> (int_float_or_string(x); takes_int(x)), (Number,)),
+            (x -> (int_float_or_string(x); int_or_string(x)), (Union{Number,String},)),
+            (b -> (ready(b.v); b.v.x), (AnyBox,)),
+        )
+        @test isempty(get_reports(analyze_call(f, argtypes)))
+    end
+
+    # other refinements are kept
+    let result = analyze_call(x -> (takes_int(x); x.x), (Any,))
+        r = only(get_reports(result))
+        @test r isa FieldErrorReport && r.field === :x
+    end
+    # so the error at the refining call is not reported again afterwards
+    let result = analyze_call(x -> (takes_int(x); x + 1), (Union{Nothing,Int},))
+        r = only(get_reports(result))
+        @test r isa NoMethodMatchReport && r.t == Any[Tuple{typeof(takes_int),Nothing}]
+    end
+    # also when another component is split, e.g. `Union{Nothing,Number}` is refined to
+    # `Number` rather than to `Union{Int,Float64}`
+    let result = analyze_call(x -> (int_float_or_string(x); int_or_string(x)), (Union{Nothing,Number},))
+        r = only(get_reports(result))
+        @test r isa NoMethodMatchReport &&
+            r.t == Any[Tuple{typeof(int_float_or_string),Nothing}]
+    end
+    # or when components are joined, e.g. into `Tuple{Union{Int,String,Symbol}}`
+    let result = analyze_call(x -> (takes_joinable_tuples(x); also_takes_joinable_tuples(x)), (Union{Nothing,JoinableTuples},))
+        r = only(get_reports(result))
+        @test r isa NoMethodMatchReport &&
+            r.t == Any[Tuple{typeof(takes_joinable_tuples),Nothing}]
+    end
+    # joining components does not split them, so `Tuple{Union{Nothing,Int}}` stays
+    # refined to `Tuple{Int}` within the joined `Tuple{Union{Int,String}}`
+    let result = analyze_call((Union{Tuple{Union{Nothing,Int}},Tuple{String},Float64,Symbol},)) do x
+            takes_tuple_or_number(x)
+            x isa Tuple && int_or_string(x[1])
+        end
+        @test isempty(get_reports(result))
+    end
+    # nor do parts merging into a single type within a component, e.g. `Tuple{Int,Integer}`
+    # and `Tuple{Real,Integer}` within `Tuple{Real,Real}`
+    let result = analyze_call((Union{Tuple{Union{Int,AbstractString},Any},
+                                     Tuple{Union{Int,Symbol},Any},
+                                     Tuple{Real,Real}},)) do x
+            takes_mergeable_tuples(x)
+            x isa Tuple{AbstractFloat,AbstractFloat} && takes_int(x[2])
+        end
+        @test isempty(get_reports(result))
+    end
+    # field refinements through `MustAlias` (v1.14 and later)
+    @static if isdefinedglobal(CC, :form_mustalias_refinement)
+        let result = analyze_call((NumberOrNothingBox,)) do b
+                int_float_or_string(b.v)
+                int_or_string(b.v)
+            end
+            r = only(get_reports(result))
+            @test r isa NoMethodMatchReport &&
+                r.t == Any[Tuple{typeof(int_float_or_string),Nothing}]
+        end
+        # the refinement of `y` is kept, although the alias of `x` passed as the first
+        # argument holds the field type before the `isa` check
+        let result = analyze_call(check_any_and_int, (AnyAndIntOrNothing,))
+            r = only(get_reports(result))
+            @test r isa NoMethodMatchReport &&
+                r.t == Any[Tuple{typeof(takes_any_and_int),Any,Nothing}]
+        end
+        # the field is still known to be defined, although its type is widened back to `Any`
+        @test isempty(get_reports(analyze_call(check_maybe_undef_box, (MaybeUndefBox,))))
+    end
+end
+
 function analyze_test_text(text::String; jetconfigs...)
     interp = JET.JETConcreteInterpreter(LSAnalyzer(; report_target_modules=nothing))
     result = JET.analyze_and_report_text!(interp, text; jetconfigs...)
