@@ -15,13 +15,13 @@ runtime = { lower = "1.13-", upper = "1.14-" }
 destination = "snapshots/v1.13"
 
 [snapshots."1.14"]
-commit = "7040e4cc737a41a4483e705bc5da7ea67ed295cf"
-source-branch = "avi/JETLS-Compiler-head-v1.14-2026-11-02"
+commit = "11740742340c41fbf24c7ba4838ba068c725e636"
+source-branch = "avi/JETLS-Compiler-head-v1.14-2026-11-04"
 runtime = { lower = "1.14-", upper = "1.15-" }
 destination = "snapshots/v1.14"
 
 [snapshots."1.15"]
-commit = "ec01dde8f8408db2d14bdff2373a1867f4e060df"
-source-branch = "avi/JETLS-Compiler-head-v1.15-2026-11-02"
+commit = "27a1916f837447c0456a539d64398499c101bf8e"
+source-branch = "avi/JETLS-Compiler-head-v1.15-2026-11-04"
 runtime = { lower = "1.15-", upper = "1.16-" }
 destination = "snapshots/v1.15"
