@@ -53,6 +53,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed false `inference/*` diagnostics, such as [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error), for errors that occur only in a method for some types of an argument without a declared type, when the call also matches a method for the argument of any type:
+  ```julia
+  # `findlast` calls the predicate with `Bool`s only for a `BitArray`
+  last_argument_error(stack) = findlast(x -> x.exception isa ArgumentError, stack) # was reported: type `Bool` has no field `exception`
+  ```
+  Such errors are now reported only through calls with arguments of the types, e.g. `last_argument_error(trues(2))`.
+  Errors for the declared types of arguments are still reported, e.g. with `stack::AbstractVector`, since a `BitVector` is an `AbstractVector`.
+  See [Signature analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/inference/signature) for details.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1018)
+
 ## 2026-11-16
 
 - Commit: [`56a6f4a`](https://github.com/aviatesk/JETLS.jl/commit/56a6f4a)
