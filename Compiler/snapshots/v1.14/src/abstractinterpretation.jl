@@ -598,20 +598,20 @@ end
 
 function conditional_argtype(𝕃ᵢ::AbstractLattice, @nospecialize(rt), @nospecialize(sig),
                              argtypes::Vector{Any}, i::Int)
-    if isa(rt, InterConditional) && rt.slot == i
-        return rt
-    else
-        argt = widenslotwrapper(argtypes[i])
-        if isvarargtype(argt)
-            @assert fieldcount(sig) == i
-            argt = unwrapva(argt)
-        end
-        thentype = elsetype = tmeet(𝕃ᵢ, argt, fieldtype(sig, i))
-        condval = maybe_extract_const_bool(rt)
-        condval === true && (elsetype = Bottom)
-        condval === false && (thentype = Bottom)
-        return InterConditional(i, thentype, elsetype)
+    argt = widenslotwrapper(argtypes[i])
+    if isvarargtype(argt)
+        @assert fieldcount(sig) == i
+        argt = unwrapva(argt)
     end
+    argt = tmeet(𝕃ᵢ, argt, fieldtype(sig, i))
+    if isa(rt, InterConditional) && rt.slot == i
+        return InterConditional(i, tmeet(𝕃ᵢ, rt.thentype, widenconst(argt)), tmeet(𝕃ᵢ, rt.elsetype, widenconst(argt)))
+    end
+    thentype = elsetype = argt
+    condval = maybe_extract_const_bool(rt)
+    condval === true && (elsetype = Bottom)
+    condval === false && (thentype = Bottom)
+    return InterConditional(i, thentype, elsetype)
 end
 
 function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{MethodMatchTarget},
@@ -1155,8 +1155,15 @@ function _concrete_eval_call(
         concrete_result = ConcreteResult(edge, effects; proof)
         return ConstCallResult(Bottom, Any, concrete_result, effects)
     end
-    concrete_result = ConcreteResult(edge, EFFECTS_TOTAL, value; proof)
-    return ConstCallResult(Const(value), Bottom, concrete_result, EFFECTS_TOTAL)
+    rt = Const(value)
+    # A non-mutation-free value obtained by concrete evaluation may refer to global
+    # memory (e.g. a const global `Ref`), so preserve the `:inaccessiblememonly` taint
+    # of the call: otherwise the caller may access the value's memory and still be
+    # refined to be `:inaccessiblememonly` (and thus `:consistent`)
+    concrete_effects = is_mutation_free_argtype(rt) ? EFFECTS_TOTAL :
+        Effects(EFFECTS_TOTAL; inaccessiblememonly=effects.inaccessiblememonly)
+    concrete_result = ConcreteResult(edge, concrete_effects, value; proof)
+    return ConstCallResult(rt, Bottom, concrete_result, concrete_effects)
 end
 
 # check if there is a cycle and duplicated inference of `mi`
@@ -1340,10 +1347,10 @@ function const_prop_function_heuristic(interp::AbstractInterpreter, @nospecializ
         # it is almost useless to inline the op when all the same type,
         # but highly worthwhile to inline promote of a constant
         length(argtypes) > 2 || return false
-        t1 = widenconst(argtypes[2])
+        t1 = widenconst_split(argtypes[2])
         for i in 3:length(argtypes)
             at = argtypes[i]
-            ty = isvarargtype(at) ? unwraptv(at) : widenconst(at)
+            ty = isvarargtype(at) ? unwraptv(at) : widenconst_split(at)
             if ty !== t1
                 return true
             end
@@ -2963,6 +2970,24 @@ function argtypes_are_actually_getglobal(argtypes::Vector{Any})
     return isa(M.val, Module) && isa(s.val, Symbol)
 end
 
+# The optimizer turns splatted tuples into `Core.svec` calls, and the type of an svec does not
+# record its elements. Look through those calls so that splatting them stays precise.
+function svec_apply_argtypes(𝕃::AbstractLattice, fargs::Vector{Any}, argtypes::Vector{Any}, ir::IRCode)
+    newargtypes = argtypes
+    for i in 4:min(length(fargs), length(argtypes))
+        a = fargs[i]
+        isa(a, SSAValue) || continue
+        isa(argtypes[i], Const) && continue
+        stmt = ir[a][:stmt]
+        is_known_call(stmt, Core.svec, ir) || continue
+        if newargtypes === argtypes
+            newargtypes = copy(argtypes)
+        end
+        newargtypes[i] = tuple_tfunc(𝕃, Any[argextype(x, ir) for x in stmt.args[2:end]])
+    end
+    return newargtypes
+end
+
 # call where the function is known exactly
 function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         arginfo::ArgInfo, si::StmtInfo, vtypes::Union{VarTable,Nothing},
@@ -2974,6 +2999,9 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
     𝕃ᵢ = typeinf_lattice(interp)
     if isa(f, Builtin)
         if f === _apply_iterate
+            if sv isa IRInterpretationState && fargs !== nothing
+                return abstract_apply(interp, svec_apply_argtypes(𝕃ᵢ, fargs, argtypes, sv.ir), si, vtypes, sv)
+            end
             return abstract_apply(interp, argtypes, si, vtypes, sv)
         elseif f === invoke
             return abstract_invoke(interp, arginfo, si, vtypes, sv)
@@ -3133,7 +3161,9 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         end
     elseif la == 2 && f === Core.typename
         return Future{CallMeta}(call, interp, sv) do call, interp, sv
-            return CallMeta(typename_static(argtypes[2]), Bottom, EFFECTS_TOTAL, MethodResultPure())
+            # wrap `call.info` so that a call that does not fold to a constant can still be
+            # inlined, rather than left as a dynamic dispatch
+            return CallMeta(typename_static(argtypes[2]), Bottom, EFFECTS_TOTAL, MethodResultPure(call.info))
         end
     elseif f === Core._hasmethod
         return Future{CallMeta}(call, interp, sv) do call, interp, sv
@@ -3219,7 +3249,7 @@ function abstract_call_unknown(interp::AbstractInterpreter, @nospecialize(ft),
         return abstract_call_opaque_closure(interp,
             ft, ArgInfo(arginfo.fargs, newargtypes), si, vtypes, sv, #=check=#true)
     end
-    wft = widenconst(ft)
+    wft = widenconst_split(ft)
     if hasintersect(wft, Builtin)
         add_remark!(interp, sv, "Could not identify method table for call")
         return Future(CallMeta(Any, Any, Effects(), NoCallInfo()))
@@ -3464,7 +3494,7 @@ function abstract_eval_new(interp::AbstractInterpreter, e::Expr, sstate::Stateme
         # information beyond the declared type.
         if fcount !== nothing
             # `:new` throws on a `UnionAll` or `Union` rep that is only `==` to `rt` (#61323)
-            nothrow = isconcretedispatch(rt) && isconstType(widenconst(argtype))
+            nothrow = isconcretedispatch(rt) && widenconst(argtype) <: DataType
             @assert nargs ≤ fcount "malformed :new expression" # syntactically enforced by the front-end
             ats = Vector{Any}(undef, nargs)
             local anyrefine = false
@@ -3543,7 +3573,7 @@ function abstract_eval_splatnew(interp::AbstractInterpreter, e::Expr, sstate::St
     argtype = abstract_eval_value(interp, e.args[1], sstate, sv)
     rt, isexact = instanceof_tfunc(argtype, true)
     # `:splatnew` throws on a `UnionAll` or `Union` rep that is only `==` to `rt` (#61323)
-    isexact = isexact && isconstType(widenconst(argtype))
+    isexact = isexact && widenconst(argtype) <: DataType
     nothrow = false
     if length(e.args) == 2 && isconcretedispatch(rt) && !ismutabletype(rt)
         at = abstract_eval_value(interp, e.args[2], sstate, sv)
@@ -4561,7 +4591,7 @@ end
 end
 @nospecializeinfer function widenreturn_consts(@nospecialize(rt))
     isa(rt, Const) && return rt
-    return widenconst(rt)
+    return widenconst_split(rt)
 end
 
 @nospecializeinfer function widenreturn(::JLTypeLattice, @nospecialize(rt), ::BestguessInfo)
@@ -4937,7 +4967,7 @@ function typeinf_local(interp::AbstractInterpreter, frame::InferenceState, nextr
             end
             if changes !== nothing
                 stoverwrite1!(currstate, changes)
-                update_alias_table!(slot_aliases, stmt, frame.src.code)
+                update_alias_table!(slot_aliases, stmt, frame.src.code, currstate, bbstart, currpc)
             end
             if refinements isa SlotRefinement
                 apply_refinement!(𝕃ᵢ, refinements.slot, refinements.typ, currstate, changes, slot_aliases)
@@ -5034,7 +5064,8 @@ end
 
 # Core transfer function: update an alias table for a single statement.
 # Handles assignments (`y = x`) and `NewvarNode` declaration
-function update_alias_table!(aliases::Vector{Int}, @nospecialize(stmt), code::Vector{Any})
+function update_alias_table!(aliases::Vector{Int}, @nospecialize(stmt), code::Vector{Any},
+                             currstate::VarTable, bbstart::Int, currpc::Int)
     if isa(stmt, NewvarNode)
         # When a slot is killed, also clear any slots that alias it, since
         # those aliases are now stale (the target has a new undefined value).
@@ -5052,11 +5083,21 @@ function update_alias_table!(aliases::Vector{Int}, @nospecialize(stmt), code::Ve
     # They still hold the OLD value of lhs, so the alias lhs_id→... is stale.
     clear_slot_aliases!(aliases, lhs_id)
     rhs === nothing && return
+    readpc = currpc
     while isa(rhs, SSAValue)
-        rhs = code[rhs.id]
+        readpc = rhs.id
+        rhs = code[readpc]
     end
     if isa(rhs, SlotNumber)
         rhs_id = slot_id(rhs)
+        if readpc != currpc
+            # `lhs` holds the value the slot had when it was read at `readpc`, which is
+            # stale if the slot was reassigned in between (e.g. `x, y = y, x`).
+            # `ssadef` can only order definitions within the current block,
+            # so give up on reads from earlier blocks.
+            readpc ≥ bbstart || return
+            readpc < currstate[rhs_id].ssadef < currpc && return
+        end
         rhs_alias = aliases[rhs_id]
         aliases[lhs_id] = rhs_alias == 0 ? rhs_id : rhs_alias
     end
@@ -5194,7 +5235,7 @@ function typeinf(interp::AbstractInterpreter, frame::InferenceState{I}) where {I
             time_now = _time_ns()
             callee.time_self_ns += (time_now - time_before)
             time_before = time_now
-            finish_nocycle(interp, callee, time_before)
+            time_before = finish_nocycle(interp, callee, time_before)
             callee.frameid == 0 && break
             takenext = length(callstack)
             nextstateid = takenext + 1 - frame.frameid
@@ -5218,7 +5259,7 @@ function typeinf(interp::AbstractInterpreter, frame::InferenceState{I}) where {I
                 end
             end
             if no_active_ips_in_cycle
-                finish_cycle(interp, callstack, callee.cycleid, time_before)
+                time_before = finish_cycle(interp, callstack, callee.cycleid, time_before)
             end
             takenext = length(callstack)
             nextstateid = takenext + 1 - frame.frameid

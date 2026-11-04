@@ -155,7 +155,7 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Base => Symbol("@locals"),
     Base => Symbol("@noinline"),
     Base => Symbol("@nospecialize"),
-    # src/utils/jl-syntax-macros.jl
+    # src/utils/jl-syntax-macros.jl, except the `@atomic` macros (see their stubs)
     Core => Symbol("@doc"),
     Base => Symbol("@assert"),
     Base => Symbol("@assume_effects"),
@@ -1094,6 +1094,350 @@ function _build_invokelatest_call(
         args...])
 end
 
+# New-style implementations of `Base.@atomic` / `@atomicswap` / `@atomicreplace` /
+# `@atomiconce`. These match Base's expansions (`getproperty(x, :f, order)`,
+# `modifyproperty!(x, :f, op, v, order)`, `getindex_atomic(xs, order, i)`, ...), so the
+# arguments keep their provenance and type inference sees the actual atomic operations.
+# As in Base, the orders flow through as written, and the operator of an updating form
+# like `x.f += v` is resolved in the caller's scope.
+#
+# These are not listed in `NEW_STYLE_MACRO_BINDINGS`, so `remove_macrocalls` still replaces
+# them with a `block` of their arguments, which are ordinary code. Otherwise the fallback
+# lowering with `remove_macrocalls` could not recover from invalid input that fails lowering
+# of their expansions, like a misplaced field declaration, e.g. `@atomic x` while typing
+# `@atomic x.f`, or `$` in the arguments.
+is_atomic_field_declaration(ex::SyntaxTree) =
+    JS.head(ex) === :identifier || JS.head(ex) === :(::)
+
+function Base.var"@atomic"(__context__::BS.MacroContext, ex::SyntaxTree)
+    if is_atomic_field_declaration(ex)
+        return JL.@ast(__context__, __context__.macrocall::SyntaxTree, [:atomic ex])
+    end
+    return @something(
+        _make_atomic(__context__, _atomic_default_order(__context__), ex),
+        _atomic_recovery(__context__, ex))
+end
+
+function Base.var"@atomic"(
+        __context__::BS.MacroContext, order::SyntaxTree, ex::SyntaxTree
+    )
+    return @something(
+        _make_atomic(__context__, order, ex),
+        _atomic_recovery(__context__, order, ex))
+end
+
+function Base.var"@atomic"(
+        __context__::BS.MacroContext, a1::SyntaxTree, op::SyntaxTree, a2::SyntaxTree
+    )
+    return @something(
+        _make_atomic_modify(__context__, _atomic_default_order(__context__), a1, op, a2),
+        _atomic_recovery(__context__, a1, op, a2))
+end
+
+function Base.var"@atomic"(
+        __context__::BS.MacroContext, order::SyntaxTree, a1::SyntaxTree, op::SyntaxTree,
+        a2::SyntaxTree
+    )
+    return @something(
+        _make_atomic_modify(__context__, order, a1, op, a2),
+        _atomic_recovery(__context__, order, a1, op, a2))
+end
+
+function Base.var"@atomic"(__context__::BS.MacroContext, args::SyntaxTree...)
+    push_macro_error!(__context__.macrocall::SyntaxTree,
+        "`@atomic` expects 1 to 4 arguments: `[order] ex` or `[order] a1 op a2`")
+    return _atomic_recovery(__context__, args...)
+end
+
+function Base.var"@atomicswap"(__context__::BS.MacroContext, ex::SyntaxTree)
+    return @something(
+        _make_atomicswap(__context__, _atomic_default_order(__context__), ex),
+        _atomic_recovery(__context__, ex))
+end
+
+function Base.var"@atomicswap"(
+        __context__::BS.MacroContext, order::SyntaxTree, ex::SyntaxTree
+    )
+    return @something(
+        _make_atomicswap(__context__, order, ex),
+        _atomic_recovery(__context__, order, ex))
+end
+
+function Base.var"@atomicswap"(__context__::BS.MacroContext, args::SyntaxTree...)
+    push_macro_error!(__context__.macrocall::SyntaxTree,
+        "`@atomicswap` expects 1 or 2 arguments: `[order] ex`")
+    return _atomic_recovery(__context__, args...)
+end
+
+function Base.var"@atomicreplace"(
+        __context__::BS.MacroContext, ex::SyntaxTree, old_new::SyntaxTree
+    )
+    order = _atomic_default_order(__context__)
+    return @something(
+        _make_atomicreplace(__context__, order, order, ex, old_new),
+        _atomic_recovery(__context__, ex, old_new))
+end
+
+function Base.var"@atomicreplace"(
+        __context__::BS.MacroContext, order::SyntaxTree, ex::SyntaxTree,
+        old_new::SyntaxTree
+    )
+    return @something(
+        _make_atomicreplace(__context__, order, order, ex, old_new),
+        _atomic_recovery(__context__, order, ex, old_new))
+end
+
+function Base.var"@atomicreplace"(
+        __context__::BS.MacroContext, success_order::SyntaxTree, fail_order::SyntaxTree,
+        ex::SyntaxTree, old_new::SyntaxTree
+    )
+    return @something(
+        _make_atomicreplace(__context__, success_order, fail_order, ex, old_new),
+        _atomic_recovery(__context__, success_order, fail_order, ex, old_new))
+end
+
+function Base.var"@atomicreplace"(__context__::BS.MacroContext, args::SyntaxTree...)
+    push_macro_error!(__context__.macrocall::SyntaxTree,
+        "`@atomicreplace` expects 2 to 4 arguments: `[success_order [fail_order]] ex expected => desired`")
+    return _atomic_recovery(__context__, args...)
+end
+
+function Base.var"@atomiconce"(__context__::BS.MacroContext, ex::SyntaxTree)
+    order = _atomic_default_order(__context__)
+    return @something(
+        _make_atomiconce(__context__, order, order, ex),
+        _atomic_recovery(__context__, ex))
+end
+
+function Base.var"@atomiconce"(
+        __context__::BS.MacroContext, order::SyntaxTree, ex::SyntaxTree
+    )
+    return @something(
+        _make_atomiconce(__context__, order, order, ex),
+        _atomic_recovery(__context__, order, ex))
+end
+
+function Base.var"@atomiconce"(
+        __context__::BS.MacroContext, success_order::SyntaxTree, fail_order::SyntaxTree,
+        ex::SyntaxTree
+    )
+    return @something(
+        _make_atomiconce(__context__, success_order, fail_order, ex),
+        _atomic_recovery(__context__, success_order, fail_order, ex))
+end
+
+function Base.var"@atomiconce"(__context__::BS.MacroContext, args::SyntaxTree...)
+    push_macro_error!(__context__.macrocall::SyntaxTree,
+        "`@atomiconce` expects 1 to 3 arguments: `[success_order [fail_order]] ex`")
+    return _atomic_recovery(__context__, args...)
+end
+
+_atomic_default_order(ctx::BS.MacroContext) = JL.@ast(ctx, _macro_generated_source(ctx),
+    [:inert "sequentially_consistent"::identifier])
+
+_is_atomic_property(ex::SyntaxTree) = JS.head(ex) === :. && JS.numchildren(ex) == 2
+_is_atomic_index(ex::SyntaxTree) = JS.head(ex) === :ref && JS.numchildren(ex) ≥ 1
+_atomic_indices(ex::SyntaxTree) = SyntaxTree[ex[i] for i::Int in 2:JS.numchildren(ex)]
+
+function _atomic_recovery(ctx::BS.MacroContext, args::SyntaxTree...)
+    mc = ctx.macrocall::SyntaxTree
+    isempty(args) && return JL.@ast(ctx, mc, nothing::value)
+    return JL.@ast(ctx, mc, [:block args...])
+end
+
+# Base leaves invalid orderings to the runtime, which throws `ConcurrencyViolationError`, so
+# the literal ones are checked here. `:not_atomic` is not checked, since the runtime accepts
+# it for non-atomic fields.
+const _ATOMIC_ORDERINGS = ( # from the weakest
+    "unordered", "monotonic", "acquire", "release", "acquire_release",
+    "sequentially_consistent")
+const _ATOMIC_LOAD_ORDERINGS = (
+    "unordered", "monotonic", "acquire", "sequentially_consistent")
+const _ATOMIC_STORE_ORDERINGS = (
+    "unordered", "monotonic", "release", "sequentially_consistent")
+const _ATOMIC_RMW_ORDERINGS = (
+    "monotonic", "acquire", "release", "acquire_release", "sequentially_consistent")
+
+# Return the name of `order` if it is a literal ordering valid for `orderings`
+function _check_atomic_ordering(
+        order::SyntaxTree, orderings::Tuple{Vararg{String}}, operation::String,
+        macroname::String
+    )
+    (JS.head(order) === :inert && JS.numchildren(order) == 1) || return nothing
+    name = @something get_name_val(order[1]) return nothing
+    (name == "not_atomic" || name in orderings) && return name
+    expected = join(("`:$o`" for o in orderings), ", ", ", or ")
+    push_macro_error!(order,
+        "`$macroname`: invalid atomic ordering `:$name` for $operation; expected $expected")
+    return nothing
+end
+
+# The failure of `@atomicreplace` and `@atomiconce` is a load, whose ordering can't be
+# stronger than the success ordering. With a single ordering, it is used for both.
+function _check_atomic_cas_orderings(
+        success_order::SyntaxTree, fail_order::SyntaxTree, macroname::String
+    )
+    success = _check_atomic_ordering(
+        success_order, _ATOMIC_RMW_ORDERINGS, "a read-modify-write", macroname)
+    if fail_order === success_order
+        success === nothing || _check_atomic_ordering(fail_order, _ATOMIC_LOAD_ORDERINGS,
+            "the failure case, which also uses this ordering", macroname)
+        return nothing
+    end
+    failure = _check_atomic_ordering(
+        fail_order, _ATOMIC_LOAD_ORDERINGS, "the failure case", macroname)
+    (success === nothing || failure === nothing) && return nothing
+    success_rank = @something findfirst(==(success), _ATOMIC_ORDERINGS) return nothing
+    failure_rank = @something findfirst(==(failure), _ATOMIC_ORDERINGS) return nothing
+    if failure_rank > success_rank
+        push_macro_error!(fail_order,
+            "`$macroname`: failure ordering `:$failure` is stronger than the success ordering `:$success`")
+    end
+    return nothing
+end
+
+# Mirrors `make_atomic(order, ex)` in Base. Returns `nothing` when `ex` is not an atomic
+# operation, with the issue reported.
+function _make_atomic(ctx::BS.MacroContext, order::SyntaxTree, ex::SyntaxTree)
+    mc = ctx.macrocall::SyntaxTree
+    k = JS.head(ex)
+    if _is_atomic_property(ex)
+        _check_atomic_ordering(order, _ATOMIC_LOAD_ORDERINGS, "a load", "@atomic")
+        return JL.@ast(ctx, mc, [:call
+            [:top "getproperty"::identifier] ex[1] ex[2] order])
+    elseif k === :call && JS.numchildren(ex) == 3
+        return _make_atomic_modify(ctx, order, ex[2], ex[1], ex[3])
+    elseif _is_atomic_index(ex)
+        _check_atomic_ordering(order, _ATOMIC_LOAD_ORDERINGS, "a load", "@atomic")
+        return JL.@ast(ctx, mc, [:call
+            [:top "getindex_atomic"::identifier] ex[1] order _atomic_indices(ex)...])
+    elseif k === :(=) && JS.numchildren(ex) == 2
+        lhs, rhs = ex[1], ex[2]
+        if _is_atomic_property(lhs)
+            _check_atomic_ordering(order, _ATOMIC_STORE_ORDERINGS, "a store", "@atomic")
+            return JL.@ast(ctx, mc, [:call
+                [:top "setproperty!"::identifier] lhs[1] lhs[2] rhs order])
+        elseif _is_atomic_index(lhs)
+            _check_atomic_ordering(order, _ATOMIC_STORE_ORDERINGS, "a store", "@atomic")
+            return JL.@ast(ctx, mc, [:call
+                [:top "setindex_atomic!"::identifier]
+                lhs[1] order rhs _atomic_indices(lhs)...])
+        end
+        push_macro_error!(lhs,
+            "`@atomic` modify expression missing field access or indexing")
+        return nothing
+    end
+    opname = JL.opeq_op(ex)
+    if opname !== nothing
+        op = JL.@ast(ctx, ex, opname::identifier)
+        modify = @something _make_atomic_modify(ctx, order, ex[1], op, ex[2]) return nothing
+        return JL.@ast(ctx, mc, [:ref modify 2::value])
+    end
+    push_macro_error!(ex, "could not parse `@atomic` expression")
+    return nothing
+end
+
+function _make_atomic_modify(
+        ctx::BS.MacroContext, order::SyntaxTree, a1::SyntaxTree, op::SyntaxTree,
+        a2::SyntaxTree
+    )
+    mc = ctx.macrocall::SyntaxTree
+    if _is_atomic_property(a1) || _is_atomic_index(a1)
+        _check_atomic_ordering(
+            order, _ATOMIC_RMW_ORDERINGS, "a read-modify-write", "@atomic")
+    end
+    if _is_atomic_property(a1)
+        return JL.@ast(ctx, mc, [:call
+            [:top "modifyproperty!"::identifier] a1[1] a1[2] op a2 order])
+    elseif _is_atomic_index(a1)
+        return JL.@ast(ctx, mc, [:call
+            [:top "modifyindex_atomic!"::identifier]
+            a1[1] order op a2 _atomic_indices(a1)...])
+    end
+    push_macro_error!(a1,
+        "`@atomic` modify expression missing field access or indexing")
+    return nothing
+end
+
+function _make_atomicswap(ctx::BS.MacroContext, order::SyntaxTree, ex::SyntaxTree)
+    mc = ctx.macrocall::SyntaxTree
+    if !(JS.head(ex) === :(=) && JS.numchildren(ex) == 2)
+        push_macro_error!(ex, "`@atomicswap` expression missing assignment")
+        return nothing
+    end
+    lhs, val = ex[1], ex[2]
+    if _is_atomic_property(lhs) || _is_atomic_index(lhs)
+        _check_atomic_ordering(
+            order, _ATOMIC_RMW_ORDERINGS, "a read-modify-write", "@atomicswap")
+    end
+    if _is_atomic_property(lhs)
+        return JL.@ast(ctx, mc, [:call
+            [:top "swapproperty!"::identifier] lhs[1] lhs[2] val order])
+    elseif _is_atomic_index(lhs)
+        return JL.@ast(ctx, mc, [:call
+            [:top "swapindex_atomic!"::identifier]
+            lhs[1] order val _atomic_indices(lhs)...])
+    end
+    push_macro_error!(lhs,
+        "`@atomicswap` expression missing field access or indexing")
+    return nothing
+end
+
+function _make_atomicreplace(
+        ctx::BS.MacroContext, success_order::SyntaxTree, fail_order::SyntaxTree,
+        ex::SyntaxTree, old_new::SyntaxTree
+    )
+    mc = ctx.macrocall::SyntaxTree
+    expected_desired = if (JS.head(old_new) === :call && JS.numchildren(old_new) == 3 &&
+                           get_name_val(old_new[1]) == "=>")
+        SyntaxTree[old_new[2], old_new[3]]
+    else
+        SyntaxTree[JL.@ast(ctx, old_new, [:... [:(::) old_new [:top "Pair"::identifier]]])]
+    end
+    if _is_atomic_property(ex) || _is_atomic_index(ex)
+        _check_atomic_cas_orderings(success_order, fail_order, "@atomicreplace")
+    end
+    if _is_atomic_property(ex)
+        return JL.@ast(ctx, mc, [:call
+            [:top "replaceproperty!"::identifier]
+            ex[1] ex[2] expected_desired... success_order fail_order])
+    elseif _is_atomic_index(ex)
+        return JL.@ast(ctx, mc, [:call
+            [:top "replaceindex_atomic!"::identifier]
+            ex[1] success_order fail_order expected_desired... _atomic_indices(ex)...])
+    end
+    push_macro_error!(ex,
+        "`@atomicreplace` expression missing field access or indexing")
+    return nothing
+end
+
+function _make_atomiconce(
+        ctx::BS.MacroContext, success_order::SyntaxTree, fail_order::SyntaxTree,
+        ex::SyntaxTree
+    )
+    mc = ctx.macrocall::SyntaxTree
+    if !(JS.head(ex) === :(=) && JS.numchildren(ex) == 2)
+        push_macro_error!(ex, "`@atomiconce` expression missing assignment")
+        return nothing
+    end
+    lhs, val = ex[1], ex[2]
+    if _is_atomic_property(lhs) || _is_atomic_index(lhs)
+        _check_atomic_cas_orderings(success_order, fail_order, "@atomiconce")
+    end
+    if _is_atomic_property(lhs)
+        return JL.@ast(ctx, mc, [:call
+            [:top "setpropertyonce!"::identifier]
+            lhs[1] lhs[2] val success_order fail_order])
+    elseif _is_atomic_index(lhs)
+        return JL.@ast(ctx, mc, [:call
+            [:top "setindexonce_atomic!"::identifier]
+            lhs[1] success_order fail_order val _atomic_indices(lhs)...])
+    end
+    push_macro_error!(lhs,
+        "`@atomiconce` expression missing field access or indexing")
+    return nothing
+end
+
 # New-style `@kwdef` macro that preserves provenance information.
 # This strips default values from struct fields and generates keyword constructors,
 # matching the semantics of Base.@kwdef.
@@ -1177,10 +1521,22 @@ function _kwdef_extract_name(st::SyntaxTree)
         elseif (k === :(::) || k === :const || k === :atomic) &&
                JS.numchildren(st) >= 1
             st = st[1]
+        elseif _kwdef_is_atomic_field(st)
+            st = st[3]
         else
             return nothing
         end
     end
+end
+
+# Base's `@kwdef` expands macros in the struct body first, and sees the `atomic` declaration
+# that `Base.@atomic x` or `Base.@atomic x::T` expands to. The macro name is resolved as
+# JuliaLowering does, in the module of its scope layer and in the expansion world.
+function _kwdef_is_atomic_field(st::SyntaxTree)
+    (JS.head(st) === :macrocall && JS.numchildren(st) == 3 &&
+        is_atomic_field_declaration(st[3])) || return false
+    return is_macrocall_binding0(BS.syntax_module(st[1]), Base.tls_world_age(), st,
+        Base, Symbol("@atomic"))
 end
 
 function _kwdef_make_constructors(
