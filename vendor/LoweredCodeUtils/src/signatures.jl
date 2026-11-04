@@ -230,8 +230,8 @@ function identify_framemethod_calls(frame::Frame)
                     elseif mstmt.head === :meta && mstmt.args[1] === :generated
                         newex = mstmt.args[2]
                         if isa(newex, Expr)
-                            if newex.head === :new && length(newex.args) >= 2 && is_global_ref(newex.args[1], Core, :GeneratedFunctionStub)
-                                mkey = newex.args[2]
+                            if newex.head === :new && length(newex.args) >= 3
+                                mkey = is_global_ref(newex.args[1], Core, :GeneratedFunctionStub) ? newex.args[2] : newex.args[3]
                                 if isa(mkey, Symbol)
                                     mkey = GlobalRef(moduleof(frame), mkey)
                                 end
@@ -365,10 +365,10 @@ end
 rename_framemethods!(frame::Frame) = rename_framemethods!(RecursiveInterpreter(), frame)
 
 """
-    pctop, isgen = find_name_caller_sig(interp::Interpreter, frame::Frame, pc::Int, name::GlobalRef)
+    pctop, isgen, pcmeth = find_name_caller_sig(interp::Interpreter, frame::Frame, pc::Int, name::GlobalRef)
 
 Scans forward from `pc` in `frame` until a method is found that calls `name`.
-`pctop` points to the beginning of that method's signature.
+`pctop` points to the beginning of that method's signature, and `pcmeth` to its 3-argument `:method` expression.
 `isgen` is true if `name` corresponds to a generated-function stub.
 
 Alternatively, this returns `nothing` if `pc` does not appear to point to either
@@ -387,13 +387,13 @@ function find_name_caller_sig(interp::Interpreter, frame::Frame, pc::Int, name::
             # This might be the GeneratedFunctionStub for a @generated method
             for (i, bodystmt) in enumerate(body.code)
                 if isexpr(bodystmt, :meta) && (bodystmt::Expr).args[1] === :generated
-                    return signature_top(frame, stmt, pc), true
+                    return signature_top(frame, stmt, pc), true, pc
                 end
                 i >= 5 && break  # we should find this early
             end
             if length(body.code) > 1
                 bodystmt = body.code[end-1]  # the line before the final return
-                iscallto(bodystmt, moduleof(frame), name, body) && return signature_top(frame, stmt, pc), false
+                iscallto(bodystmt, moduleof(frame), name, body) && return signature_top(frame, stmt, pc), false, pc
             end
         end
         pc = next_or_nothing(interp, frame, pc)
@@ -448,7 +448,7 @@ function get_running_name(interp::Interpreter, frame::Frame, pc::Int, name::Glob
         pc = next_or_nothing(interp, frame, pc)
         return name, pc, nothing
     end
-    pctop, isgen = nameinfo
+    pctop, isgen, pcmeth = nameinfo
     # Sometimes signature_top---which follows SSAValue links backwards to find the first
     # line needed to define the signature---misses out on a SlotNumber assignment.
     # Fix https://github.com/timholy/Revise.jl/issues/422
@@ -458,6 +458,12 @@ function get_running_name(interp::Interpreter, frame::Frame, pc::Int, name::Glob
         stmt = pc_expr(frame, pctop)
     end   # end fix
     methinfo, lastpcparent = signature(interp, frame, pctop)
+    # Other methods may be defined among the statements of the caller's signature
+    while methinfo !== nothing && frame.pc < pcmeth
+        pcnext = next_or_nothing!(interp, frame)
+        pcnext === nothing && break
+        methinfo, lastpcparent = signature(interp, frame, pcnext)
+    end
     methinfo === nothing && return name, pc, lastpcparent
     mt, sigtparent = methinfo
     # Resolve against the live method tables at the latest committed world, not `whichtt`'s
@@ -612,7 +618,8 @@ function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, fram
                 codeloc = codelocation(code, pc3)
                 loc = linetable(code, codeloc)
                 ft = Base.unwrap_unionall((Base.unwrap_unionall(sigt)::DataType).parameters[1])
-                if !startswith(String((ft.name::Core.TypeName).name), "##") && loc !== nothing
+                # `ft` may not be a `DataType`, e.g. `Type{T}` on Julia 1.14+ or a callable `Union`
+                if !(ft isa DataType && startswith(String(ft.name.name), "##")) && loc !== nothing
                     @warn "file $(loc.file), line $(loc.line): no method found for $sigt"
                 end
                 if pc == pc3

@@ -9,19 +9,19 @@ runtime = { lower = "1.12.2", upper = "1.13-" }
 destination = "snapshots/v1.12"
 
 [snapshots."1.13"]
-commit = "c4e249658fc8fbeef0c69fe94c542139c070522d"
-source-branch = "avi/JETLS-Compiler-head-v1.13-2026-10-23"
+commit = "d5005548654c1f009162506a0b6206414d909480"
+source-branch = "avi/JETLS-Compiler-head-v1.13-2026-11-01"
 runtime = { lower = "1.13-", upper = "1.14-" }
 destination = "snapshots/v1.13"
 
 [snapshots."1.14"]
-commit = "b04d61962962d3c90b71db2009cdb661af6fb10f"
-source-branch = "avi/JETLS-Compiler-head-v1.14-2026-10-25"
+commit = "11740742340c41fbf24c7ba4838ba068c725e636"
+source-branch = "avi/JETLS-Compiler-head-v1.14-2026-11-04"
 runtime = { lower = "1.14-", upper = "1.15-" }
 destination = "snapshots/v1.14"
 
 [snapshots."1.15"]
-commit = "987a97bd81f321a95558964e7942533363ebe55f"
-source-branch = "avi/JETLS-Compiler-head-v1.15-2026-10-25"
+commit = "27a1916f837447c0456a539d64398499c101bf8e"
+source-branch = "avi/JETLS-Compiler-head-v1.15-2026-11-04"
 runtime = { lower = "1.15-", upper = "1.16-" }
 destination = "snapshots/v1.15"

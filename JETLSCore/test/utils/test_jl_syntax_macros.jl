@@ -23,6 +23,13 @@ isnothing(_) = true
 something(_) = :shadowed
 end
 
+module atomic_macro_alias_module
+import Base: @atomic as @at
+macro atomic(_)
+    return nothing
+end
+end
+
 function jlexpand(
         context_module::Module, code::AbstractString; recursive::Bool = true
     )
@@ -74,7 +81,7 @@ function assert_binding_provenance(
         world::UInt = Base.get_world_counter()
     )
     binding_occurrences = JETLSCore.compute_binding_occurrences(
-        res.ctx3, res.st3, world; include_global_bindings=true)
+        res.ctx3, res.st3, res.st0, world; include_global_bindings=true)
     binfo = nothing
     for (b, _) in binding_occurrences
         if b.kind === kind && b.name == name
@@ -115,7 +122,7 @@ function assert_no_binding(
         world::UInt = Base.get_world_counter()
     )
     binding_occurrences = JETLSCore.compute_binding_occurrences(
-        res.ctx3, res.st3, world; include_global_bindings=true)
+        res.ctx3, res.st3, res.st0, world; include_global_bindings=true)
     found = any(binding_occurrences) do (b, _)
         b.kind === kind && b.name == name
     end
@@ -259,6 +266,45 @@ end
             binfo = JL.get_binding(result.ctx3, result.binding)
             @test binfo.name == "MyStruct"
             @test binfo.kind === :global
+        end
+    end
+
+    @testset "`@atomic` fields" begin
+        let res = jlresolve("""
+                @kwdef mutable struct A
+                    @atomic x::Int
+                    y::Int = x + 1
+                end
+                """)
+            assert_no_binding(res, :global, "x")
+        end
+
+        # Recognized by the binding of the macro, not by its name
+        let res = jlresolve(atomic_macro_alias_module, """
+                @kwdef mutable struct A
+                    @atomic x::Int
+                    @at y::Int
+                    z::Int = x + y
+                end
+                """)
+            assert_binding_provenance(res, :global, "x")
+            assert_no_binding(res, :global, "y")
+        end
+
+        @static if VERSION >= v"1.14-"
+            jleval("""
+                @kwdef mutable struct KwdefAtomicFields
+                    @atomic a::Int
+                    (@atomic b::Int) = 2
+                    Base.@atomic c
+                    d::Int = 4
+                end
+                """)
+            let T = @invokelatest lowering_module.KwdefAtomicFields
+                @test all(i -> Base.isfieldatomic(T, i), 1:3)
+                x = T(; a = 1, c = 3)
+                @test ((@atomic x.a), (@atomic x.b), (@atomic x.c), x.d) == (1, 2, 3, 4)
+            end
         end
     end
 end
@@ -1270,6 +1316,199 @@ end
     end
 end
 
+@testset "@atomic / @atomicswap / @atomicreplace / @atomiconce" begin
+    @testset "macro expansion" begin
+        for (code, name) in (
+                ("@atomic a.x", "getproperty"),
+                ("@atomic :acquire a.x", "getproperty"),
+                ("@atomic a.x = v", "setproperty!"),
+                ("@atomic a.x += v", "modifyproperty!"),
+                ("@atomic a.x max v", "modifyproperty!"),
+                ("@atomic :acquire_release max(a.x, v)", "modifyproperty!"),
+                ("@atomic xs[i]", "getindex_atomic"),
+                ("@atomic xs[i] = v", "setindex_atomic!"),
+                ("@atomic xs[i] += v", "modifyindex_atomic!"),
+                ("@atomic xs[i] max v", "modifyindex_atomic!"),
+                ("@atomicswap a.x = v", "swapproperty!"),
+                ("@atomicswap :acquire xs[i] = v", "swapindex_atomic!"),
+                ("@atomicreplace a.x e => d", "replaceproperty!"),
+                ("@atomicreplace :acquire_release :monotonic xs[i] e => d", "replaceindex_atomic!"),
+                ("@atomiconce a.x = v", "setpropertyonce!"),
+                ("@atomiconce :acquire_release :monotonic xs[i] = v", "setindexonce_atomic!"),
+            )
+            @test find_named_ref(jlexpand(code), :top, name) !== nothing
+        end
+
+        # Updating forms take the new value from the pair `modifyproperty!` returns
+        @test JS.head(jlexpand("@atomic a.x += v")) === :ref
+
+        for code in ("@atomic x", "@atomic x::Int")
+            @test JS.head(jlexpand(code)) === :atomic
+        end
+    end
+
+    @testset "validation" begin
+        for (code, node, msg) in (
+                ("@atomic", "@atomic", "`@atomic` expects 1 to 4 arguments"),
+                ("@atomic o a.x f v w", "@atomic o a.x f v w", "`@atomic` expects 1 to 4 arguments"),
+                ("@atomic f(a)", "f(a)", "could not parse `@atomic` expression"),
+                ("@atomic :acquire x", "x", "could not parse `@atomic` expression"),
+                ("@atomic x = v", "x", "`@atomic` modify expression missing field access or indexing"),
+                ("@atomic x += v", "x", "`@atomic` modify expression missing field access or indexing"),
+                ("@atomic x max v", "x", "`@atomic` modify expression missing field access or indexing"),
+                ("@atomicswap", "@atomicswap", "`@atomicswap` expects 1 or 2 arguments"),
+                ("@atomicswap a.x", "a.x", "`@atomicswap` expression missing assignment"),
+                ("@atomicswap x = v", "x", "`@atomicswap` expression missing field access or indexing"),
+                ("@atomicreplace a.x", "@atomicreplace a.x", "`@atomicreplace` expects 2 to 4 arguments"),
+                ("@atomicreplace x e => d", "x", "`@atomicreplace` expression missing field access or indexing"),
+                ("@atomiconce", "@atomiconce", "`@atomiconce` expects 1 to 3 arguments"),
+                ("@atomiconce a.x", "a.x", "`@atomiconce` expression missing assignment"),
+                ("@atomiconce x = v", "x", "`@atomiconce` expression missing field access or indexing"),
+            )
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test JS.sourcetext(d.node) == node
+                @test occursin(msg, d.msg)
+            end
+        end
+    end
+
+    @testset "orderings" begin
+        for (code, node, msg) in (
+                ("@atomic :relaxed a.x", ":relaxed",
+                 "`@atomic`: invalid atomic ordering `:relaxed` for a load; expected `:unordered`, `:monotonic`, `:acquire`, or `:sequentially_consistent`"),
+                ("@atomic :release a.x", ":release", "`:release` for a load"),
+                ("@atomic :acquire_release xs[i]", ":acquire_release", "for a load"),
+                ("@atomic :acquire a.x = v", ":acquire", "`:acquire` for a store"),
+                ("@atomic :acquire_release xs[i] = v", ":acquire_release", "for a store"),
+                ("@atomic :unordered a.x += v", ":unordered", "for a read-modify-write"),
+                ("@atomic :unordered a.x max v", ":unordered", "for a read-modify-write"),
+                ("@atomic :unordered max(xs[i], v)", ":unordered", "for a read-modify-write"),
+                ("@atomicswap :unordered a.x = v", ":unordered",
+                 "`@atomicswap`: invalid atomic ordering `:unordered` for a read-modify-write"),
+                ("@atomicreplace :unordered :monotonic a.x e => d", ":unordered",
+                 "for a read-modify-write"),
+                ("@atomicreplace :sequentially_consistent :release a.x e => d", ":release",
+                 "`:release` for the failure case;"),
+                ("@atomicreplace :monotonic :acquire xs[i] e => d", ":acquire",
+                 "`@atomicreplace`: failure ordering `:acquire` is stronger than the success ordering `:monotonic`"),
+                ("@atomicreplace :release a.x e => d", ":release",
+                 "for the failure case, which also uses this ordering"),
+                ("@atomiconce :acquire_release a.x = v", ":acquire_release",
+                 "for the failure case, which also uses this ordering"),
+                ("@atomiconce :acquire :sequentially_consistent xs[i] = v",
+                 ":sequentially_consistent", "stronger than the success ordering `:acquire`"),
+            )
+            let diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+                @test JS.sourcetext(d.node) == node
+                @test occursin(msg, d.msg)
+            end
+        end
+
+        # `:not_atomic` is valid for non-atomic fields, and non-literal orderings are not checked
+        for code in ("@atomic :acquire a.x", "@atomic :unordered xs[i]",
+                     "@atomic :release a.x = v", "@atomic :acquire_release a.x += v",
+                     "@atomic :monotonic a.x max v", "@atomicswap :acquire xs[i] = v",
+                     "@atomicreplace :release :acquire a.x e => d",
+                     "@atomicreplace :acquire a.x e => d",
+                     "@atomiconce :sequentially_consistent :unordered xs[i] = v",
+                     "@atomic :not_atomic a.x", "@atomic order a.x = v",
+                     "@atomicreplace so fo a.x e => d")
+            @test isempty(collect_macro_diagnostics(() -> jlexpand(code)))
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("@atomic ooo aaa.x += vvv")
+            assert_binding_provenance(res, :global, "ooo")
+            assert_binding_provenance(res, :global, "aaa")
+            assert_binding_provenance(res, :global, "vvv")
+        end
+        let res = jlresolve("@atomic xs[iii] fff vvv")
+            assert_binding_provenance(res, :global, "xs")
+            assert_binding_provenance(res, :global, "iii")
+            assert_binding_provenance(res, :global, "fff")
+            assert_binding_provenance(res, :global, "vvv")
+        end
+        let res = jlresolve("@atomicreplace sss fff aaa.x eee => ddd")
+            for name in ("sss", "fff", "aaa", "eee", "ddd")
+                assert_binding_provenance(res, :global, name)
+            end
+        end
+        let res = jlresolve("@atomiconce xs[iii] = vvv")
+            assert_binding_provenance(res, :global, "xs")
+            assert_binding_provenance(res, :global, "iii")
+            assert_binding_provenance(res, :global, "vvv")
+        end
+        let res = jlresolve("mutable struct AtomicFieldProvenance\n    @atomic x::TTT\nend")
+            assert_binding_provenance(res, :global, "TTT")
+        end
+        # Misused forms flow through
+        let res = jlresolve("@atomic :acquire xxx")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+
+    @testset "runtime semantics" begin
+        @test jleval("""
+            let m = AtomicMemory{Int}(undef, 1), n = AtomicMemory{Any}(undef, 1)
+                ((@atomic m[1] = 1), (@atomic :monotonic m[1]), (@atomic m[1] += 2),
+                 (@atomic m[1] max 5), (@atomicswap m[1] = 1), (@atomicreplace m[1] 1 => 2),
+                 (@atomiconce n[1] = 1), (@atomiconce n[1] = 2), (@atomic m[1]))
+            end
+            """) == (1, 1, 3, 3 => 5, 5, (old = 1, success = true), true, false, 2)
+
+        @static if VERSION >= v"1.14-"
+            jleval("""
+                mutable struct AtomicFields
+                    @atomic x::Int
+                    @atomic y
+                    z
+                    AtomicFields(x) = new(x)
+                end
+                """)
+            @test [Base.isfieldatomic(lowering_module.AtomicFields, i) for i = 1:3] ==
+                [true, true, false]
+
+            @test jleval("""
+                let a = AtomicFields(1), order = :monotonic
+                    ((@atomic a.x), (@atomic order a.x), (@atomic :release a.x = 2),
+                     (@atomic a.x += 3), (@atomic a.x max 1), (@atomic :acquire_release a.x - 1),
+                     (@atomic max(a.x, 7)), a.x)
+                end
+                """) == (1, 1, 2, 5, 5 => 5, 5 => 4, 4 => 7, 7)
+            @test jleval("""
+                let a = AtomicFields(1), p = 2 => 3
+                    ((@atomicswap a.x = 2), (@atomicreplace a.x 1 => 4),
+                     (@atomicreplace :acquire_release :monotonic a.x p),
+                     (@atomiconce a.y = 1), (@atomiconce :acquire_release :acquire a.y = 2),
+                     a.x, a.y)
+                end
+                """) == (1, (old = 2, success = false), (old = 2, success = true), true, false, 3, 1)
+
+            @testset "generated helper hygiene" begin
+                # The operator of an updating form is the caller's, as in Base
+                @test jleval("""
+                    let a = AtomicFields(1), p = 0 => 2,
+                        getproperty = nothing, modifyproperty! = nothing, Pair = nothing,
+                        (+) = (-)
+                        ((@atomic a.x), (@atomic a.x += 1), (@atomicreplace a.x p))
+                    end
+                    """) == (1, 0, (old = 0, success = true))
+            end
+        end
+    end
+end
+
 module test_lowering_module; using Test; end
 test_macro_expand(code::AbstractString) = jlexpand(test_lowering_module, code)
 test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
@@ -1544,7 +1783,8 @@ end
             local_result = assert_binding_provenance(res, :local, "i")
             if local_result !== nothing
                 world = Base.get_world_counter()
-                occurrences = JETLSCore.compute_binding_occurrences(res.ctx3, res.st3, world)
+                occurrences = JETLSCore.compute_binding_occurrences(
+                    res.ctx3, res.st3, res.st0, world)
                 desc_range = source_range(code, "\"case: \$(i)\"")
                 @test any(occurrences[local_result[1]]) do occurrence
                     occurrence.kind === :use && JS.byte_range(occurrence.tree) ⊆ desc_range

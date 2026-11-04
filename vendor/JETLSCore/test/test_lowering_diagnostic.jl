@@ -1472,6 +1472,54 @@ end
         @test any(m -> occursin("undef_b", m), undef_msgs)
     end
 
+    @testset "`\$` in `@atomic` does not suppress sibling lowering diagnostics" begin
+        for code in ("""
+                function f(x)
+                    @atomic \$x
+                    undef_a
+                end
+                """, """
+                function f(a, v)
+                    @atomic a.x = \$v
+                    undef_a
+                end
+                """, """
+                function f(a, v)
+                    @atomic a.x = :(\$\$v)
+                    undef_a
+                end
+                """, """
+                mutable struct S
+                    @atomic x::\$Int
+                    y::undef_a
+                end
+                """)
+            diagnostics = get_lowering_diagnostics(code; context_module = @__MODULE__)
+            @test any(d -> d.code == JETLSCore.LOWERING_ERROR_CODE, diagnostics)
+            @test any(diagnostics) do d
+                d.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE && occursin("undef_a", d.message)
+            end
+        end
+    end
+
+    # e.g. `@atomic x` while typing `@atomic x.f`
+    @testset "misplaced `@atomic` field declaration does not suppress sibling lowering diagnostics" begin
+        diagnostics = get_lowering_diagnostics("""
+            function f(x)
+                @atomic x
+                undef_a
+            end
+            """; context_module = @__MODULE__)
+        @test count(diagnostics) do d
+            d.code == JETLSCore.LOWERING_ERROR_CODE &&
+                d.range.start == Position(; line = 1, character = 4) &&
+                d.range.var"end" == Position(; line = 1, character = 13)
+        end == 1
+        @test any(diagnostics) do d
+            d.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE && occursin("undef_a", d.message)
+        end
+    end
+
     # The sink-reported node only has a line in the file defining `@m_static_error`.
     @testset "macro expansion error reported in an old-style macro from another file" begin
         diagnostics = get_lowering_diagnostics("""

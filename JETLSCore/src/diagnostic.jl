@@ -2565,7 +2565,7 @@ function analyze_lowered_code!(
         deprecated_binding_cache::DeprecatedBindingCache = DeprecatedBindingCache()
     )
     (; ctx3, ctx4, st0, st3) = res
-    binding_occurrences = compute_binding_occurrences(ctx3, st3, world;
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, st0, world;
         include_global_bindings=true)
 
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments

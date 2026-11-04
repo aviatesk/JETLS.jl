@@ -234,74 +234,6 @@ let
     @test any(edge -> edge === binding, ci.edges)
 end
 
-# When an SCC with an unpublished member also has a member that will be published, that
-# member carries the SCC-wide proof, and the other consumers depend on its CodeInstance
-# instead of copying the proof.
-module AnchoredCycleProof
-    const FLAG = true
-    callee() = FLAG ? 1 : 2
-    anchor() = 3
-    entry() = 1
-end
-
-let
-    world = Base.get_world_counter()
-    inf_params = Compiler.InferenceParams(; cache_owner=AnchoredCycleProof)
-    interp = Compiler.NativeInterpreter(world; inf_params)
-    binding = convert(Core.Binding, GlobalRef(AnchoredCycleProof, :FLAG))
-
-    outer_mi = Base.method_instance(AnchoredCycleProof.entry, ())
-    outer_result = Compiler.InferenceResult(outer_mi, Compiler.typeinf_lattice(interp))
-    outer_result.ci = Compiler.engine_reserve(interp, outer_mi)
-    outer = Compiler.InferenceState(outer_result, Compiler.CACHE_MODE_GLOBAL, interp)
-
-    child_mi = Base.method_instance(AnchoredCycleProof.callee, ())
-    child_result = Compiler.InferenceResult(child_mi, Compiler.typeinf_lattice(interp))
-    child_result.ci = Compiler.engine_reserve(interp, child_mi)
-    child = Compiler.InferenceState(child_result, Compiler.CACHE_MODE_GLOBAL, interp)
-    Compiler.assign_parentchild!(child, outer)
-
-    anchor_mi = Base.method_instance(AnchoredCycleProof.anchor, ())
-    anchor_result = Compiler.InferenceResult(anchor_mi, Compiler.typeinf_lattice(interp))
-    anchor_result.ci = Compiler.engine_reserve(interp, anchor_mi)
-    anchor = Compiler.InferenceState(anchor_result, Compiler.CACHE_MODE_GLOBAL, interp)
-    Compiler.assign_parentchild!(anchor, child)
-
-    empty!(child.ip)
-    fill!(child.ssavaluetypes, Any)
-    causes = Compiler.IdSet{Compiler.InferenceState}()
-    push!(causes, outer)
-    child.ssavaluetypes[1] = Compiler.LimitedAccuracy(Int, causes)
-    child.bestguess = Core.Const(1)
-    child.exc_bestguess = Union{}
-    child.ipo_effects = Compiler.EFFECTS_TOTAL
-    push!(child.edges, binding)
-    Compiler.finishinfer!(child, interp, child.cycleid,
-        IdDict{Core.MethodInstance,Core.CodeInstance}())
-    @test child.result.tombstone
-    @test iszero(child.cache_mode & Compiler.CACHE_MODE_GLOBAL)
-
-    Compiler.add_cycle_backedge!(outer, child)
-    Compiler.propagate_unpublished_cycle_proof!(
-        child.callstack, 2, world, child.valid_worlds)
-    anchor_proofs = filter(edge -> edge isa Compiler.LocalInferenceProof, anchor.edges)
-    @test length(anchor_proofs) == 1
-    @test any(edge -> edge === binding,
-        Compiler.materialize_inference_edges(only(anchor_proofs).edges))
-    for consumer in (outer, child)
-        @test !any(edge -> edge isa Compiler.LocalInferenceProof, consumer.edges)
-        @test any(edge -> edge === anchor_result.ci, consumer.edges)
-    end
-
-    # No caller can reach the tombstoned CodeInstance, so its edges are not materialized.
-    Compiler.finish!(interp, child, Base.get_world_counter(), time_ns())
-    @test isempty(child_result.ci.edges)
-
-    for ci in (outer_result.ci, child_result.ci, anchor_result.ci)
-        Compiler.engine_reject(interp, ci)
-    end
-end
-
 # Local constant inference keeps its dependency proof separate from the executable target.
 module LocalProofConstpropCache
     const SINK = Ref{Any}()
@@ -1655,6 +1587,11 @@ tpara18457(::Type{AbstractMyType18457{I}}) where {I} = I
 tpara18457(::Type{A}) where {A<:AbstractMyType18457} = tpara18457(supertype(A))
 @test tpara18457(MyType18457{true}) === true
 
+struct ShiftTri{A,B,C} end
+shift_tri(::Type{ShiftTri{A,B,C}}, n::Int) where {A,B,C} = n == 0 ? Val(A) : shift_tri(ShiftTri{B,C,C}, n - 1)
+@test only(Base.return_types(n -> shift_tri(ShiftTri{Int8,Int16,Vector{Int}}, n), (Int,))) ==
+    Union{Val{Int8}, Val{Int16}, Val{Vector{Int}}}
+
 @testset "type inference error #19322" begin
     Y_19322 = reshape(round.(Int, abs.(randn(5*1000))) .+ 1, 1000, 5)
 
@@ -2351,6 +2288,28 @@ let nfields_tfunc(@nospecialize xs...) =
     @test sizeof_tfunc(Type{Ptr}) === Const(sizeof(Ptr))
     @test bitsizeof_tfunc(Type{BitsizeofUInt17}) === Const(17)
     @test bitsizeof_tfunc(DataType) === Int
+    @test bitsizeof_tfunc(Core.TypeEgal{BitsizeofUInt17}) === Const(17)
+    @test bitsizeof_tfunc(BitsizeofUInt17) === Const(17)
+    @test bitsizeof_tfunc(Const(0x01)) === Const(8)
+    @test bitsizeof_tfunc(Const(Pair{Int32,Int16})) === Int
+    @test bitsizeof_tfunc(Core.TypeEgal{Union{Int8,Int16}}) === Int
+    @test bitsizeof_tfunc(Tuple{Int}) === Int
+    bitsizeof_nothrow(@nospecialize xs...) = Compiler.bitsizeof_nothrow(xs...)
+    @test bitsizeof_nothrow(Const(Int))
+    @test bitsizeof_nothrow(Const(1.0))
+    @test bitsizeof_nothrow(Core.TypeEgal{BitsizeofUInt17})
+    @test bitsizeof_nothrow(Union{Int8, Ptr, Core.TypeEgal{Float32}})
+    @test !bitsizeof_nothrow(Type{BitsizeofUInt17})
+    @test !bitsizeof_nothrow(Const(Ptr))
+    @test !bitsizeof_nothrow(Core.TypeEgal{Ptr})
+    @test !bitsizeof_nothrow(Const(Pair{Int32,Int16}))
+    @test !bitsizeof_nothrow(Core.TypeEgal{Tuple{Int}})
+    @test !bitsizeof_nothrow(Core.TypeEgal{Union{Int8,Int16}})
+    @test !bitsizeof_nothrow(Const("abc"))
+    @test !bitsizeof_nothrow(String)
+    @test !bitsizeof_nothrow(Union{Int, String})
+    @test !bitsizeof_nothrow(DataType)
+    @test !bitsizeof_nothrow(Any)
     @test !sizeof_nothrow(Union{Ptr, Int, Type{Ptr{Int8}}, Type{Int}})
     @test sizeof_nothrow(Union{Ptr, Int, Core.TypeEgal{Ptr{Int8}}, Core.TypeEgal{Int}})
     @test sizeof_nothrow(Const(Ptr))
@@ -2936,15 +2895,17 @@ let S = (Union{T, U} where {T<:Int, U<:Int})
     getfield1_61323(x) = getfield(x, 1)
     @test call_type_int61323(getvar61323, S) isa TypeVar
     @test call_type_int61323(getfield1_61323, S) isa TypeVar
-    @test Base.return_types(getvar61323, (Type{Int},)) == Any[TypeVar]
-    @test Base.return_types(getvar61323, (Core.TypeEgal{Int},)) == Any[Union{}]
-    @test TypeVar <: only(Base.return_types(getfield1_61323, (Type{Int},)))
-    @test Union{} ∉ Base.return_types(supertype, (Type{Int},))
+    @test Base.infer_return_type(getvar61323, (Type{Int},)) == TypeVar
+    @test Base.infer_return_type(getvar61323, (Core.TypeEgal{Int},)) == Union{}
+    @test TypeVar <: Base.infer_return_type(getfield1_61323, (Type{Int},))
+    @test Union{} != Base.infer_return_type(supertype, (Type{Int},))
     let 𝕃 = Compiler.fallback_lattice
         @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(:name)) === Compiler.Const(Int.name)
         @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(:super)) === Type{Signed}
         @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(:foo)) === Union{}
+        @test Compiler.getfield_tfunc(𝕃, Type{Int}, Compiler.Const(1.0)) === Union{}
     end
+    @test Base.infer_return_type(x -> getfield(x, 1.0), (Type{Int},)) == Union{}
 end
 
 # Defined type-valued static parameters should retain egality so DataType
@@ -3116,6 +3077,11 @@ end
         iszero_simple(0) ? nothing : missing
     end |> only === Nothing
 end
+sigisint(x::Integer, c::Bool) = c ? x isa Int : true
+sigisint(x::String, c::Bool) = false
+@test Base.return_types((Union{Int,String}, Bool)) do x, c
+    sigisint(x, c) ? x : nothing
+end |> only == Union{Nothing,Int}
 
 @testset "branching on conditional object" begin
     # simple
@@ -3985,6 +3951,13 @@ end
 tail_is_ntuple_val((@nospecialize t::Tuple)) = Val(tail_is_ntuple(t))
 @test Base.return_types(tail_is_ntuple, (Tuple,)) |> only === Bool
 @test Base.return_types(tail_is_ntuple_val, (Tuple,)) |> only === Val{true}
+function condgoto(x, q)
+    h = x isa Int
+    q && @goto a
+    @label b; h = false
+    @label a; h = false; @goto b
+end
+@test Base.infer_return_type(condgoto, (Any, Bool)) === Union{}
 
 # https://github.com/JuliaLang/julia/issues/47435
 is_closed_ex(e::InvalidStateException) = true
@@ -5403,6 +5376,46 @@ end == Int
         end
         return nothing
     end == Union{Nothing, String}
+    @test Base.infer_return_type((Any, Any)) do a, b
+        x = a; y = b
+        x, y = y, x
+        if b isa Int
+            return y
+        end
+        return nothing
+    end == Any
+    @test Base.infer_return_type((Any, Any)) do a, b
+        x = a; y = b
+        x, y = y, x
+        typeassert(b, Int)
+        return y
+    end == Any
+    # after the swap, `x` does hold `b` and should still be refined
+    @test Base.infer_return_type((Any, Any)) do a, b
+        x = a; y = b
+        x, y = y, x
+        if b isa Int
+            return x
+        end
+        return nothing
+    end == Union{Nothing, Int}
+    @test Base.infer_return_type((Any, Any, Bool)) do a, b, c
+        x = a
+        y = b
+        y, z = x, (c && (x = 1; true); y)
+        if x isa Int
+            return y
+        end
+        return nothing
+    end == Any
+    @test Base.infer_return_type((Any,)) do a
+        x = y = identity(a)
+        z = x
+        if x isa Int
+            return z
+        end
+        return nothing
+    end == Union{Nothing, Int}
     # typeassert-based refinement should also propagate to aliases
     @test Base.infer_return_type((Any,)) do x
         y = x
@@ -8759,5 +8772,12 @@ frec_rt_cycle(t::TreeRTCycle) =
 let rt = only(Base.return_types(map, (typeof(frec_rt_cycle), Vector{TreeRTCycle})))
     @test !any(T -> T === Vector{Union{}}, Compiler.uniontypes(rt))
 end
+
+# irinterp must keep splats precise after the optimizer turns them into `Core.svec` calls
+const SPLAT_SVEC_NAMES = ntuple(i -> Symbol(:a, i), 33)
+@inline splat_svec_inner(names, vals...) = NamedTuple{names}(vals)
+@inline splat_svec_outer(names, vals::Tuple) = splat_svec_inner(names, vals...)
+splat_svec_caller(vals) = splat_svec_outer(SPLAT_SVEC_NAMES, vals)
+@test Base.infer_return_type(splat_svec_caller, (NTuple{33,Int},)) === NamedTuple{SPLAT_SVEC_NAMES, NTuple{33,Int}}
 
 end # module inference

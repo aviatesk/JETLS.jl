@@ -53,7 +53,7 @@ See [`JSON3.write`](@ref) and [`JSON3.read`](@ref).
 pretty(str, ac=AlignmentContext(); kw...) = pretty(stdout, str, ac; kw...)
 pretty(out::IO, x, ac=AlignmentContext(); kw...) = pretty(out, JSON3.write(x; kw...), ac; kw...)
 function pretty(out::IO, str::AbstractString, ac=AlignmentContext(); kw...)
-    buf = codeunits(str)
+    buf = codeunits(jsonstring(str))
     len = length(buf)
     if len == 0
         return
@@ -65,7 +65,7 @@ function pretty(out::IO, str::AbstractString, ac=AlignmentContext(); kw...)
     if b == UInt8('{')
         Base.write(out, "{\n")
 
-        obj = JSON3.read(str; kw...)
+        obj = JSON3.parse(str; kw...)
 
         if length(obj) == 0
             Base.write(out, ' '^(ac.indent * ac.level + ac.offset) * "}")
@@ -80,7 +80,7 @@ function pretty(out::IO, str::AbstractString, ac=AlignmentContext(); kw...)
         i = 1
         for (key, value) in obj
             Base.write(out, ' '^(ac.level * ac.indent))
-            Base.write(out, lpad("\"$(key)\"" * ": ", ac.offset, ' '))
+            Base.write(out, lpad(JSON3.write(String(key)) * ": ", ac.offset, ' '))
             pretty(out, JSON3.write(value; kw...), ac; kw...)
             if i == length(obj)
                 ac.level -= 1
@@ -95,7 +95,7 @@ function pretty(out::IO, str::AbstractString, ac=AlignmentContext(); kw...)
     elseif b == UInt8('[')
         Base.write(out, "[\n")
 
-        arr = JSON3.read(str; kw...)
+        arr = JSON3.parse(str; kw...)
 
         if length(arr) == 0
             Base.write(out, ' '^(ac.indent * ac.level + ac.offset) * "]")

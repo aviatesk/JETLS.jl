@@ -75,11 +75,11 @@ end
         @test name == "##JETLS_UNQUOTE_PLACEHOLDER#$expected"
     end
 
-    let quoted = jlparse(raw":($value)"; rule=:statement)
+    let content = jlparse(raw":($value)"; rule=:statement)[1]
         parameters = Dict("##JETLS_UNQUOTE_PLACEHOLDER#0" =>
             jlparse(raw"var\"##JETLS_UNQUOTE_PLACEHOLDER#0\""; rule=:statement))
         resolution = JETLSCore.resolve_inert_tree(
-            lowering_module, Base.get_world_counter(), quoted; parameters)
+            lowering_module, Base.get_world_counter(), content; parameters)
         @test resolution !== nothing
         @test resolution.placeholder_name == "##JETLS_UNQUOTE_PLACEHOLDER#1"
         @test only(keys(resolution.argument_remap)).name == "##JETLS_UNQUOTE_PLACEHOLDER#0"

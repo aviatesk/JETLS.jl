@@ -324,6 +324,10 @@ function direct_links!(cl::CodeLinks, src::CodeInfo)
             end
             rhs = stmt
             target = P(SSAValue(i), cl.ssapreds[i])
+        elseif isexpr(stmt, :call) && isanonymous_typedef(stmt)
+            push!(get!(Vector{Int}, cl.nameassigns, GlobalRef(stmt.args[2]::Module, (stmt.args[3]::QuoteNode).value::Symbol)), i)
+            rhs = stmt
+            target = P(SSAValue(i), cl.ssapreds[i])
         elseif (lhs_rhs = get_lhs_rhs(stmt); lhs_rhs !== nothing)
             # An assignment
             lhs, rhs = lhs_rhs
@@ -1151,9 +1155,9 @@ function add_typedefs!(
             while i <= length(stmts) && !ismethod3(stmts[i])
                 i += 1
             end
-            if i <= length(stmts) && method_name(stmts[i]::Expr) == false
+            if i <= length(stmts) && method_name(stmts[i]::Expr) in (false, nothing)
                 tpreds = terminal_preds(i, edges)
-                if minimum(tpreds) == idx && i ∉ norequire
+                if minimum(tpreds) == minimum(terminal_preds(idx, edges); init=idx) && i ∉ norequire
                     changed |= !isrequired[i]
                     isrequired[i] = true
                 end

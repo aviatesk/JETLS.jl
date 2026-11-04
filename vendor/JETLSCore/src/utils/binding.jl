@@ -255,7 +255,10 @@ function cursor_bindings(
     scope_id = innermost_scope_id(ctx3, offset)
     while scope_id != 0
         scope = ctx3.scopes[scope_id]
-        for id in sort!(collect(values(scope.vars)))
+        ids = collect(values(scope.vars))
+        # Implicit globals are not declared in any scope, so they are offered at the top scope
+        scope.parent_id == 0 && union!(ids, keys(global_nodes))
+        for id in sort!(ids)
             binfo = ctx3.bindings.info[id]
             binfo.name in seen && continue
             node = binfo.kind === :global ?
@@ -378,8 +381,8 @@ end
 
 Return the binding closest to the cursor at `offset` within `st0_top`,
 or `nothing` if no binding is found. On success the returned named tuple
-contains `(; ctx3, st3, st0, binding)` where `binding` satisfies
-`JS.head(binding) === :bindingid`.
+contains `(; ctx3, st3, st0, binding)` where `st3` is lowered from `st0` and
+`binding` satisfies `JS.head(binding) === :bindingid`.
 """
 function select_target_binding(
         st0_top::SyntaxTree, offset::Int, context_module::Module, world::UInt;
@@ -400,20 +403,21 @@ function select_target_binding(
     import_using_result !== nothing && return import_using_result
 
     st0′ = remove_macrocalls(context_module, world, st0; strip_static=true)
-    (; ctx3, st3) = try
+    res = try
         # Remove macros to preserve precise source locations
         jl_lower_for_scope_resolution(context_module, world, st0′; soft_scope)
     catch err
         is_user_lowering_error(err) || report_lowering_bug(err)
         return nothing
     end
+    (; ctx3, st3) = res
     primary = _select_target_binding(ctx3, st3, offset)
     if primary !== nothing
         binding = @something _find_global_binding_at_source(ctx3, primary) primary
-        return (; ctx3, st3, st0, binding)
+        return (; ctx3, st3, res.st0, binding)
     end
     inert_result = select_inert_target_binding(
-        st0, ctx3, st3, offset, context_module, world; soft_scope)
+        res.st0, ctx3, st3, offset, context_module, world; soft_scope)
     inert_result !== nothing && return inert_result
 
     inner_constructor = select_struct_inner_constructor_binding(ctx3, st0, offset)
@@ -421,7 +425,7 @@ function select_target_binding(
         inner_constructor = select_struct_inner_constructor_binding(ctx3, st0, offset-1)
     end
     if inner_constructor !== nothing
-        return (; ctx3, st3, st0, binding=inner_constructor)
+        return (; ctx3, st3, res.st0, binding=inner_constructor)
     end
     return nothing
 end
@@ -491,6 +495,7 @@ end
 struct InertResolution
     ctx3::JL.VariableAnalysisContext
     st3::SyntaxTree
+    st0::SyntaxTree # the tree `st3` is lowered from
     argument_remap::Dict{JL.BindingInfo,SyntaxTree}
     placeholder_name::String
     source_range::UnitRange{Int}
@@ -516,58 +521,49 @@ function synthetic_parameter_remap(
     return remap
 end
 
-function _make_inert_placeholder(st3::SyntaxTree, placeholder_name::String)
-    return newleaf(st3, :identifier, placeholder_name)
+function _make_inert_placeholder(st0::SyntaxTree, placeholder_name::String)
+    return newleaf(st0, :identifier, placeholder_name)
 end
 
 function _mask_inert_interpolations(
-        st3::SyntaxTree, placeholder_name::String, preserve_nested_interpolations::Bool,
-        quote_depth::Int = 0, syntax_quote_depth::Int = 0
+        st0::SyntaxTree, placeholder_name::String, preserve_nested_interpolations::Bool,
+        quote_depth::Int = 0
     )
-    kind = JS.head(st3)
+    kind = JS.head(st0)
     if kind === :$
         if preserve_nested_interpolations && quote_depth > 0
-            return (st3, false)
+            return (st0, false)
         end
-        return (_make_inert_placeholder(st3, placeholder_name), true)
-    elseif kind === :syntaxunquote
-        if preserve_nested_interpolations && syntax_quote_depth > 0
-            return (st3, false)
-        end
-        return (_make_inert_placeholder(st3, placeholder_name), true)
-    elseif JS.is_leaf(st3)
-        return (st3, false)
+        return (_make_inert_placeholder(st0, placeholder_name), true)
+    elseif JS.is_leaf(st0)
+        return (st0, false)
     end
 
     child_quote_depth = quote_depth + (kind === :quote)
-    child_syntax_quote_depth =
-        syntax_quote_depth + (kind in (:syntaxquote, :syntaxinert))
     new_children = SyntaxList()
     changed = false
-    for child in JS.children(st3)
+    for child in JS.children(st0)
         new_child, child_changed = _mask_inert_interpolations(
-            child, placeholder_name, preserve_nested_interpolations,
-            child_quote_depth, child_syntax_quote_depth)
+            child, placeholder_name, preserve_nested_interpolations, child_quote_depth)
         changed |= child_changed
         push!(new_children, new_child)
     end
-    return (changed ? BS.@mknode(st3; children=new_children) : st3, changed)
+    return (changed ? BS.@mknode(st0; children=new_children) : st0, changed)
 end
 mask_inert_interpolations(
-    st3::SyntaxTree, placeholder_name::String; preserve_nested_interpolations::Bool = false
-) = first(_mask_inert_interpolations(st3, placeholder_name, preserve_nested_interpolations))
+    st0::SyntaxTree, placeholder_name::String; preserve_nested_interpolations::Bool = false
+) = first(_mask_inert_interpolations(st0, placeholder_name, preserve_nested_interpolations))
 
-# Replace direct interpolation subtrees in a lowered inert template with a
-# synthetic identifier so scope resolution cannot reinterpret interpolation values
-# as free names. With `preserve_nested_interpolations`, regular and syntax
-# interpolations enclosed by their corresponding quote kind are kept for
-# JuliaLowering to resolve in the inert template's execution scope.
+# Replace direct interpolation subtrees in quoted code with a synthetic identifier so
+# scope resolution cannot reinterpret interpolation values as free names. With
+# `preserve_nested_interpolations`, interpolations enclosed by nested quotes are kept
+# for JuliaLowering to resolve in the inert template's execution scope.
 function prepare_inert_template(
-        st3::SyntaxTree;
+        st0::SyntaxTree;
         parameters::Dict{String,SyntaxTree} = Dict{String,SyntaxTree}(),
         preserve_nested_interpolations::Bool = false
     )
-    names = collect_identifier_names!(Set{String}(keys(parameters)), st3)
+    names = collect_identifier_names!(Set{String}(keys(parameters)), st0)
     # Later lowering may intern this name, so reuse candidates across independent analyses.
     index = 0
     placeholder_name = "##JETLS_UNQUOTE_PLACEHOLDER#0"
@@ -576,28 +572,27 @@ function prepare_inert_template(
         placeholder_name = string("##JETLS_UNQUOTE_PLACEHOLDER#", string(index))
     end
     template = mask_inert_interpolations(
-        st3, placeholder_name; preserve_nested_interpolations)
+        st0, placeholder_name; preserve_nested_interpolations)
     return template, placeholder_name
 end
 
 function resolve_inert_tree(
-        context_module::Module, world::UInt, inert_tree::SyntaxTree;
+        context_module::Module, world::UInt, content::SyntaxTree;
         parameters::Dict{String,SyntaxTree} = Dict{String,SyntaxTree}(),
         hard_scope::Bool = false,
         soft_scope::Bool = false,
         preserve_nested_interpolations::Bool = false
     )
-    JS.numchildren(inert_tree) >= 1 || return nothing
     template, placeholder_name = prepare_inert_template(
-        inert_tree[1]; parameters, preserve_nested_interpolations)
+        content; parameters, preserve_nested_interpolations)
     input = if hard_scope || !isempty(parameters)
         parameter_nodes = SyntaxList()
         for (name, source) in parameters
             parameter = newleaf(source, :identifier, name)
             push!(parameter_nodes, parameter)
         end
-        parameter_list = JL.@ast(_, inert_tree, [:tuple parameter_nodes...])
-        JL.@ast(_, inert_tree, [:function parameter_list template])
+        parameter_list = JL.@ast(_, content, [:tuple parameter_nodes...])
+        JL.@ast(_, content, [:function parameter_list template])
     else
         template
     end
@@ -608,52 +603,99 @@ function resolve_inert_tree(
         return nothing
     end
     argument_remap = synthetic_parameter_remap(ires.ctx3, ires.st3, parameters)
-    source_range = JS.byte_range(inert_tree)
+    source_range = JS.byte_range(content)
     return InertResolution(
-        ires.ctx3, ires.st3, argument_remap, placeholder_name, source_range)
+        ires.ctx3, ires.st3, ires.st0, argument_remap, placeholder_name, source_range)
 end
 
-function contains_syntaxunquote(st::SyntaxTree)
-    stack = SyntaxTree[st]
-    while !isempty(stack)
-        node = pop!(stack)
-        JS.head(node) === :syntaxunquote && return true
-        for child in JS.children(node)
-            push!(stack, child)
+"""
+    foreach_quoted_code(f, context_module::Module, world::UInt, st0::SyntaxTree)
+
+Call `f(content)` for the code quoted by each `quote` or `:inert` (an atomic quote such as
+`:x`) in `st0` and the input quoted by each `@eval`, where they are entered from unquoted
+code, i.e. not nested in another quote except through interpolation.
+
+Quoted code is taken from the source tree rather than the lowered tree, where
+JuliaLowering expands it into code constructing its `Expr` without source locations.
+"""
+function foreach_quoted_code(f, context_module::Module, world::UInt, st0::SyntaxTree)
+    _foreach_quoted_code(f, context_module, world, st0, 0)
+    return nothing
+end
+
+function _foreach_quoted_code(
+        f, context_module::Module, world::UInt, st0::SyntaxTree, depth::Int
+    )
+    JS.is_leaf(st0) && return nothing
+    k = JS.head(st0)
+    nchildren = JS.numchildren(st0)
+    if k === :. && nchildren == 2 && JS.head(st0[2]) === :inert
+        # The field name of `lhs.rhs` is wrapped in `:inert` but isn't quoted code
+        return _foreach_quoted_code(f, context_module, world, st0[1], depth)
+    end
+    quoted = if k in (:quote, :inert)
+        nchildren == 1 ? 1 : 0
+    elseif (k === :macrocall && depth == 0 && nchildren in (3, 4) &&
+            is_ateval0(context_module, world, st0))
+        # `@eval [mod] ex` that is expanded, i.e. not in quoted code
+        nchildren
+    else
+        0
+    end
+    for i = 1:nchildren
+        child = st0[i]
+        if i == quoted
+            depth == 0 && f(child)
+            _foreach_quoted_code(f, context_module, world, child, depth + 1)
+        else
+            _foreach_quoted_code(f, context_module, world, child, depth - (k === :$))
         end
     end
-    return false
+    return nothing
 end
 
+"""
+    collect_generated_inert_resolutions(
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, st0::SyntaxTree, world::UInt
+    ) -> Vector{InertResolution}
+
+Resolve the code quoted in the bodies of the generated functions lowered into `st3` from
+`st0`, within the scope of their arguments.
+"""
 function collect_generated_inert_resolutions(
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, world::UInt
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTree, st0::SyntaxTree, world::UInt
     )
     resolutions = InertResolution[]
-    seen = Set{Tuple{Symbol,UnitRange{Int}}}()
     method_ids = generated_method_ids(ctx3, st3)
     isempty(method_ids) && return resolutions
+    generators = @NamedTuple{
+        range::UnitRange{Int}, context_module::Module, args::Dict{String,SyntaxTree}}[]
     traverse(st3) do st3′::SyntaxTree
         lambda = @something generated_method_lambda(st3′, method_ids) return nothing
-        args = generated_lambda_argument_bindings(ctx3, lambda)
-        method_binfo = JL.get_binding(ctx3, st3′[1])
-        context_module = method_binfo.mod
+        context_module = JL.get_binding(ctx3, st3′[1]).mod
         context_module isa Module || return traversal_no_recurse
-        traverse(lambda) do node::SyntaxTree
-            is_import_eval_call(node) && return traversal_no_recurse
-            JS.head(node) in (:inert, :syntaxinert) || return nothing
-            if JS.head(node) === :syntaxinert && contains_syntaxunquote(node)
-                return nothing
-            end
-            key = (JS.head(node), JS.byte_range(node))
-            key in seen && return traversal_no_recurse
-            push!(seen, key)
-            resolution = resolve_inert_tree(context_module, world, node;
-                parameters=args, hard_scope=true,
-                preserve_nested_interpolations=true)
-            resolution === nothing || push!(resolutions, resolution)
-            return traversal_no_recurse
-        end
+        args = generated_lambda_argument_bindings(ctx3, lambda)
+        push!(generators, (; range=JS.byte_range(st3′), context_module, args))
         return traversal_no_recurse
+    end
+    isempty(generators) && return resolutions
+    foreach_quoted_code(ctx3.layer.mod, world, st0) do content::SyntaxTree
+        range = JS.byte_range(content)
+        is_generated_inert_range(ctx3.layer.mod, world, st0, range) || return nothing
+        # The generator of the innermost generated function enclosing the quote
+        generator = nothing
+        for candidate in generators
+            range ⊆ candidate.range || continue
+            if generator === nothing || length(candidate.range) < length(generator.range)
+                generator = candidate
+            end
+        end
+        generator === nothing && return nothing
+        resolution = resolve_inert_tree(generator.context_module, world, content;
+            parameters=generator.args, hard_scope=true,
+            preserve_nested_interpolations=true)
+        resolution === nothing || push!(resolutions, resolution)
+        return nothing
     end
     return resolutions
 end
@@ -694,11 +736,27 @@ function is_code_shaped_quote_range(st0::SyntaxTree, range::UnitRange{Int})
     return false
 end
 
+# The body that the generator of the generated function `st0` runs, if any
+function generated_body0(context_module::Module, world::UInt, st0::SyntaxTree)
+    if JS.head(st0) === :macrocall # `@generated function f(...) ... end`
+        is_generated0(context_module, world, st0) || return nothing
+        def = st0[end]
+        JS.head(def) in (:function, :(=)) && JS.numchildren(def) == 2 || return nothing
+        return def[2]
+    elseif JS.head(st0) === :if # `if @generated ... else ... end`
+        JS.numchildren(st0) >= 2 && is_generated0(context_module, world, st0[1]) ||
+            return nothing
+        return st0[2]
+    end
+    return nothing
+end
+
 function is_generated_inert_range(
         context_module::Module, world::UInt, st0::SyntaxTree, range::UnitRange{Int}
     )
     return any(byte_ancestors(st0, range)) do ancestor
-        is_generated0(context_module, world, ancestor)
+        body = @something generated_body0(context_module, world, ancestor) return false
+        return range ⊆ JS.byte_range(body)
     end
 end
 
@@ -807,7 +865,7 @@ function select_inert_target_binding(
         soft_scope::Bool = false
     )
     inside_generated = false
-    for resolution in collect_generated_inert_resolutions(ctx3, st3, world)
+    for resolution in collect_generated_inert_resolutions(ctx3, st3, st0, world)
         (offset in resolution.source_range ||
             (offset > 0 && offset-1 in resolution.source_range)) || continue
         inside_generated = true
@@ -817,41 +875,40 @@ function select_inert_target_binding(
         if source !== nothing
             return (; ctx3, st3, st0, binding=source)
         elseif !binfo.is_internal && binfo.name != resolution.placeholder_name
-            return (; ctx3=resolution.ctx3, st3=resolution.st3, st0, binding)
+            return (; ctx3=resolution.ctx3, st3=resolution.st3, resolution.st0, binding)
         end
     end
     inside_generated && return nothing
 
-    inert_tree = @something(
-        enclosing_inert_tree(st3, offset),
-        offset > 0 ? enclosing_inert_tree(st3, offset-1) : nothing,
+    content = @something(
+        enclosing_quoted_code(context_module, world, st0, offset),
+        offset > 0 ? enclosing_quoted_code(context_module, world, st0, offset-1) : nothing,
         return nothing)
-    range = JS.byte_range(inert_tree)
+    range = JS.byte_range(content)
     policy = inert_resolution_policy(context_module, world, st0, range)
     resolution = @something resolve_inert_tree(
-        context_module, world, inert_tree;
+        context_module, world, content;
         hard_scope=policy === :macro, soft_scope) return nothing
     binding = @something resolved_binding_at(resolution, offset) return nothing
     binfo = JL.get_binding(resolution.ctx3, binding)
     binfo.is_internal && return nothing
     binfo.name == resolution.placeholder_name && return nothing
     binfo.kind === :global && policy === :unresolved && return nothing
-    return (; ctx3=resolution.ctx3, st3=resolution.st3, st0, binding)
+    return (; ctx3=resolution.ctx3, st3=resolution.st3, resolution.st0, binding)
 end
 
-# Find the innermost `:inert` or `:syntaxinert` node in `st3` whose byte
-# range contains `offset`. Used to run fresh scope resolution on just that inert
-# subtree.
-function enclosing_inert_tree(st3::SyntaxTree, offset::Int)
+# Find the innermost `foreach_quoted_code` content in `st0` whose byte range contains
+# `offset`. Used to run fresh scope resolution on just that quoted code.
+function enclosing_quoted_code(
+        context_module::Module, world::UInt, st0::SyntaxTree, offset::Int
+    )
     best = Ref{Union{Nothing,SyntaxTree}}(nothing)
     best_len = Ref(typemax(Int))
-    traverse(st3) do st::SyntaxTree
-        JS.head(st) in (:inert, :syntaxinert) || return nothing
-        offset in JS.byte_range(st) || return nothing
-        len = length(JS.byte_range(st))
-        if len < best_len[]
-            best[] = st
-            best_len[] = len
+    foreach_quoted_code(context_module, world, st0) do content::SyntaxTree
+        range = JS.byte_range(content)
+        if offset in range && length(range) < best_len[]
+            best[] = content
+            best_len[] = length(range)
         end
         return nothing
     end

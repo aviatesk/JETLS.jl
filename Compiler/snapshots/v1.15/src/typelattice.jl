@@ -433,11 +433,10 @@ end
         a = Bool
     elseif isa(b, ConditionalT)
         if isa(a, Const) && isa(a.val, Bool)
-           if (a.val === true && b.thentype === Any && b.elsetype === Bottom) ||
-              (a.val === false && b.elsetype === Any && b.thentype === Bottom)
-               # this Conditional contains distinctly no lattice information, and is simply an alternative representation of the Const Bool used for internal tracking purposes
-               return true
-           end
+            thentype, elsetype = a.val ? (Any, Bottom) : (Bottom, Any)
+            a = isa(b, Conditional) ? Conditional(b.slot, b.ssadef, thentype, elsetype) :
+                                      InterConditional(b.slot, thentype, elsetype)
+            return issubconditional(lattice, a, b)
         end
         return false
     end
@@ -689,7 +688,7 @@ end
         end
         return v
     end
-    tmeet(widenlattice(lattice), widenconst(v), t)
+    tmeet(widenlattice(lattice), widenconst_split(v), t)
 end
 
 @nospecializeinfer function tmeet(lattice::ConditionalsLattice, @nospecialize(v), @nospecialize(t::AnyType))
@@ -747,6 +746,21 @@ widenconst(t::PartialTask) = Task
 widenconst(::TypeVar) = error("unhandled TypeVar")
 widenconst(::TypeofVararg) = error("unhandled Vararg")
 widenconst(::LimitedAccuracy) = error("unhandled LimitedAccuracy")
+
+"""
+    widenconst_split(x) -> t::Type
+
+`widenconst(x)` for an `x` whose lattice element type is not known statically.
+Checks for the common lattice elements first, so that the call avoids a dynamic dispatch
+in the common case.
+"""
+function widenconst_split(@nospecialize x)
+    isa(x, AnyType) && return x
+    isa(x, Const) && return widenconst(x)
+    isa(x, PartialStruct) && return widenconst(x)
+    isa(x, AnyConditional) && return Bool
+    return widenconst(x)
+end
 
 ####################
 # state management #

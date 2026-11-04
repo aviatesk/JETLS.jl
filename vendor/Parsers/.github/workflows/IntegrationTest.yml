@@ -44,20 +44,26 @@ jobs:
           repository: ${{ matrix.package.user }}/${{ matrix.package.repo }}
           path: downstream
       - name: Load this and run the downstream tests
-        shell: julia --project=downstream {0}
+        shell: julia {0}
         run: |
           using Pkg
           try
-            # Force downstream tests to use this PR's version of the package.
-            Pkg.develop(PackageSpec(path="."))  # resolver may fail with main deps
+            # Develop this PR and the downstream package into a scratch environment, so the
+            # downstream Project.toml (including its weak dependencies) stays unchanged.
+            Pkg.activate(; temp=true)
+            downstream_name = Pkg.TOML.parsefile(joinpath("downstream", "Project.toml"))["name"]
             if "${{ matrix.package.repo }}" == "ARFFFiles.jl"
               # ARFFFiles still constructs Tables.DictColumnTable from unordered
               # Dicts, which OrderedCollections 2 rejects. Keep this downstream
               # compatibility check useful until ARFFFiles migrates those inputs.
+              # Added and pinned before developing ARFFFiles: on Julia 1.13 an add after
+              # developing it fails with "Unknown package: Tables".
               Pkg.add(PackageSpec(name="OrderedCollections", version="1"))
+              Pkg.pin("OrderedCollections")
             end
+            Pkg.develop([PackageSpec(path="."), PackageSpec(path="downstream")])  # resolver may fail with main deps
             Pkg.update()
-            Pkg.test()  # resolver may fail with test time deps
+            Pkg.test(downstream_name)  # resolver may fail with test time deps
           catch err
             err isa Pkg.Resolve.ResolverError || rethrow()
             # If we can't resolve that means this is incompatible by SemVer and this is fine;

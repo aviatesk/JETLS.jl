@@ -271,10 +271,20 @@ end
 # execution keeps native eval semantics; recursive execution intercepts it below.
 eval_in_frame(mod::Module, @nospecialize(ex)) = Core.eval(mod, ex)
 
+# JuliaLowering's `@eval` doesn't call `Core.eval`
+@static if isdefinedglobal(Base, :JuliaLowering) &&
+        isdefinedglobal(Base.JuliaLowering, :at_eval_hook)
+    is_at_eval_hook(@nospecialize(f)) = f === Base.JuliaLowering.at_eval_hook
+    const Syntax = Base.Syntax
+else
+    is_at_eval_hook(@nospecialize(f)) = false
+    const Syntax = Union{}
+end
+
 function evaluate_eval!(interp::Interpreter, frame::Frame, mod::Module, @nospecialize(ex))
     # Non-expressions have no calls to recurse into. In particular, IR nodes supplied
     # as values must not be mistaken for the synthetic driver's instructions.
-    if !(ex isa Expr)
+    if !(ex isa Union{Expr,Syntax})
         ret = maybe_eval_with_scope(Core.eval, Any[mod, ex], frame)
         return ret === nothing ? Core.eval(mod, ex) : ret.value
     end
@@ -348,7 +358,7 @@ function evaluate_call!(interp::Interpreter, frame::Frame, call_expr::Expr, ente
     return evaluate_call!(interp, frame, fargs, enter_generated)
 end
 function evaluate_call!(interp::Interpreter, frame::Frame, fargs::Vector{Any}, enter_generated::Bool)
-    if fargs[1] === eval_in_frame
+    if fargs[1] === eval_in_frame || is_at_eval_hook(fargs[1])
         return evaluate_eval!(interp, frame, fargs[2], fargs[3])
     elseif fargs[1] === Base.rethrow
         if length(fargs) > 1
@@ -753,7 +763,7 @@ function interpret_toplevel_stmt!(interp::Interpreter, frame::Frame, @nospeciali
     mod = moduleof(frame)
     lwr = if isexpr(stmt, :thunk, 1)
         stmt  # already lowered; lowering again wraps it in another thunk
-    elseif isa(stmt, Expr)
+    elseif isa(stmt, Union{Expr,Syntax})
         # Macros run natively during lowering and must see interpreted dynamic scopes.
         ret = maybe_eval_with_scope(Meta.lower, Any[mod, stmt], frame)
         ret === nothing ? Meta.lower(mod, stmt) : ret.value

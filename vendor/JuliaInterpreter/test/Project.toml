@@ -30,3 +30,6 @@ DeepDiffs = "1"
 ExplicitImports = "1.15"
 FunctionWrappers = "1"
 LoopVectorization = "0.12"
+
+[syntax]
+julia_version = "1.14"

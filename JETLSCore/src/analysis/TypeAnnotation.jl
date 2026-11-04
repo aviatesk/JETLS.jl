@@ -813,6 +813,12 @@ function annotate_types!(
             # The `ssavaluetype` corresponding to these nodes is always `Any`, and since
             # the provenance information for these nodes is very broad, it's more convenient
             # for the implementation of `get_type_for_range` to leave them untyped
+            if (stmt isa GotoIfNot && stmt.cond isa SlotNumber &&
+                    !is_internal_binding_leaf(filter, stmttree[1]))
+                # A condition slot that is always defined isn't loaded into its own
+                # statement, so annotate the use here
+                annotations.types[stmttree[1]] = slot_type_at(stmt.cond, i, frame)
+            end
             continue
         end
         # Synthetic destructure `:(=)`s share the user's RHS byte range, so

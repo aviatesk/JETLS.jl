@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`2b04cd5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/2b04cd5...HEAD)
+- Diff: [`c24f9a1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c24f9a1...HEAD)
 
 ### Announcement
 
@@ -64,6 +64,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Changed
+
+- Updated the compiler implementation, fixing inference errors that occur in specific cases on Julia 1.14 and nightly builds.
+
+### Fixed
+
+- Fixed diagnostics such as [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var), [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var), and [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) not being reported for the code within `@atomic`, `@atomicswap`, `@atomicreplace`, and `@atomiconce`, where hover, inlay hints, and other features that show inferred types did not work either:
+  ```julia
+  function add!(c::Counter, n::Int)
+      @atomic c.count += m  # now reported as `lowering/undef-global-var`
+  end
+  ```
+  Invalid uses of these macros are now also reported at the invalid part rather than at the whole macro call.
+  This includes memory orderings written as literals that are unknown or invalid for the operation, e.g. `@atomic :release c.count` (`:release` is invalid for a load), which would throw `ConcurrencyViolationError` at runtime.
+
+- Fixed false [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports on `@atomic` fields of a `@kwdef` struct used in the default values of later fields:
+  ```julia
+  @kwdef mutable struct Counter
+      @atomic count::Int
+      limit::Int = count + 10  # `count` was reported as `lowering/undef-global-var`
+  end
+  ```
+
+## 2026-10-26
+
+- Commit: [`c24f9a1`](https://github.com/aviatesk/JETLS.jl/commit/c24f9a1)
+- Diff: [`2b04cd5...c24f9a1`](https://github.com/aviatesk/JETLS.jl/compare/2b04cd5...c24f9a1)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-10-26")'
+  ```
 
 ### Added
 

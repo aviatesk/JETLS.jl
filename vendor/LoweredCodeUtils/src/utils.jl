@@ -188,6 +188,7 @@ end
 # anonymous function types are defined in a :thunk expr with a characteristic CodeInfo
 function isanonymous_typedef(@nospecialize stmt)
     if isa(stmt, Expr)
+        stmt.head === :call && return isa(stmt.args[1], Function) && nameof(stmt.args[1]) === :eval_closure_type
         stmt.head === :thunk || return false
         stmt = stmt.args[1]
     end
@@ -302,6 +303,8 @@ function typedef_range(src::CodeInfo, idx)
         iend, n = idx, length(src.code)
         while iend <= n
             s = src.code[iend]
+            next = iend < n ? getrhs(src.code[iend+1]) : nothing
+            isexpr(s, :latestworld) && isexpr(next, :call) && callee_matches(next.args[1], Core, :getfield) && (iend += 1; continue)
             (isexpr(s, :latestworld) || isexpr(s, :global) || is_return(s)) && break
             iend += 1
         end
