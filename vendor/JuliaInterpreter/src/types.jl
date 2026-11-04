@@ -197,7 +197,7 @@ function pushuniquefiles!(unique_files::Set{Symbol}, lt::Core.DebugInfo)
         pushuniquefiles!(unique_files, edge::Core.DebugInfo)
     end
     linetable = lt.linetable
-    if linetable === nothing
+    if !isa(linetable, Core.DebugInfo)
         push!(unique_files, Base.IRShow.debuginfo_file1(lt))
     else
         pushuniquefiles!(unique_files, linetable)

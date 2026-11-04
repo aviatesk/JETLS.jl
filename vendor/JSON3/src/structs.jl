@@ -10,11 +10,11 @@ end
 
 function rawbytes end
 
-read(io::Union{IO, Base.AbstractCmd}, ::Type{T}; kw...) where {T} = read(Base.read(io, String), T; kw...)
+read(io::Union{IO, Base.AbstractCmd}, ::Type{T}; kw...) where {T} = parse(Base.read(io, String), T; kw...)
 read(bytes::AbstractVector{UInt8}, ::Type{T}; kw...) where {T} = read(VectorString(bytes), T; kw...)
 
 function _prepare_read(str::AbstractString, ::Type{T}) where {T}
-    buf = codeunits(str)
+    buf = codeunits(jsonstring(str))
     len = length(buf)
     if len == 0
         error = UnexpectedEOF
@@ -260,8 +260,13 @@ end
 function readjsonlinesarray(buf, pos, len, b, ::Type{T}, ::Type{eT}; kw...) where {T, eT}
     vals = Vector{eT}(undef, 0)
     while true
+        # skip whitespace and blank lines, jump to done on eof
+        while b == UInt8(' ') || b == UInt8('\t') || b == UInt8('\n') || b == UInt8('\r')
+            pos += 1
+            pos > len && @goto done
+            b = getbyte(buf, pos)
+        end
         # positioned at start of value
-        @wh_done  # remove spaces and tabs, jump to done on eof
         pos, y = read(StructType(eT), buf, pos, len, b, eT; kw...)
         push!(vals, y)
         if pos > len
@@ -273,20 +278,6 @@ function readjsonlinesarray(buf, pos, len, b, ::Type{T}, ::Type{eT}; kw...) wher
             error = ExpectedNewline
             @goto invalid
         end
-        pos += 1
-        if pos > len
-            @goto done
-        end
-        if b == UInt8('\r')  # Previous byte was \r, look for \n
-            b = getbyte(buf, pos)
-            if b == UInt8('\n')
-                pos += 1
-                if pos > len
-                    @goto done
-                end
-            end
-        end
-        b = getbyte(buf, pos)
     end
 @label done
     return pos, construct(T, vals; kw...)

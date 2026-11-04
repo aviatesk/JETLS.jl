@@ -458,25 +458,6 @@ function get_import_sort_key(st0::SyntaxTree)
     end
 end
 
-"""
-    is_import_eval_call(st3::SyntaxTree) -> Bool
-
-Return `true` when `st3` is a `:call` to JuliaLowering's `eval_import` /
-`eval_using` runtime helpers, which `import` / `using` statements desugar into.
-The module-path components are carried as `:inert` arguments of these calls.
-Because they are compiler-generated rather than user-authored quoted code, inert
-traversals skip such calls so module paths are not mistaken for ordinary global
-references (e.g. `import A.B` nested in an `if`/`begin` block).
-"""
-function is_import_eval_call(st3::SyntaxTree)
-    JS.head(st3) === :call || return false
-    JS.numchildren(st3) ≥ 1 || return false
-    head = st3[1]
-    JS.head(head) === :value || return false
-    val = head.value
-    return val === JL.eval_import || val === JL.eval_using
-end
-
 function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTree)
     JS.head(st3) === :macrocall || return false
     JS.numchildren(st3) >= 1 || return false

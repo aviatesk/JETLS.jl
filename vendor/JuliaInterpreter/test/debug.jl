@@ -696,6 +696,9 @@ end
 
 kwcallee_fuzz(a; b=1, c=2) = a + b + c
 kwcaller_fuzz(a) = kwcallee_fuzz(a; b=10)
+kwfree_fuzz(a) = a
+call_then_kwcall_fuzz(a) = (kwfree_fuzz(a); kwcallee_fuzz(a; b=10))
+call_then_nested_kwcall_fuzz(a) = (kwfree_fuzz(a); identity(kwcallee_fuzz(a; b=10)))
 entry_inner_fuzz(x) = x + 1
 entry_middle_fuzz(x) = entry_inner_fuzz(x) + 1
 entry_outer_fuzz(x) = entry_middle_fuzz(x) + 1
@@ -706,6 +709,13 @@ entry_outer_fuzz(x) = entry_middle_fuzz(x) + 1
     name = string(JuliaInterpreter.scopeof(frame).name)
     @test occursin("kwcallee_fuzz", name)
     @test JuliaInterpreter.moduleof(frame) === @__MODULE__
+
+    # a call just before the keyword preparation is not part of it
+    for f in (call_then_kwcall_fuzz, call_then_nested_kwcall_fuzz)
+        frame = JuliaInterpreter.enter_call(f, 1)
+        frame, pc = JuliaInterpreter.debug_command(frame, :s)
+        @test JuliaInterpreter.scopeof(frame).name === :kwfree_fuzz
+    end
 end
 
 @testset "step-in starts the callee at an executable call" begin

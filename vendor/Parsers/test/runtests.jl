@@ -481,6 +481,41 @@ for i in [typemin(Int64):typemin(Int64)+20; typemax(Int)-20:typemax(Int)]
     @test tlen == length(str)
 end
 
+@testset "BigInt" begin
+    using Random
+    rng = MersenneTwister(5)
+    # Matches the generic integer parser (same grammar, flags, token length) on
+    # values within Int128 range, across short and long tokens with trailing bytes.
+    for _ in 1:5000
+        s = rand(rng, ("", "-", "+")) * String(rand(rng, '0':'9', rand(rng, 1:38)))
+        full = s * rand(rng, ("", "x", ",", "]", " "))
+        bytes = Vector{UInt8}(codeunits(full))
+        rbig = Parsers.xparse2(BigInt, bytes, 1, length(bytes))
+        r128 = Parsers.xparse2(Int128, bytes, 1, length(bytes))
+        @test Parsers.ok(rbig.code) == Parsers.ok(r128.code)
+        if Parsers.ok(rbig.code)
+            @test rbig.val == r128.val
+            @test rbig.tlen == r128.tlen
+        end
+    end
+    # Long tokens take the GMP converter and match Base, including leading
+    # zeros, signs, and the subquadratic time (the old limb loop was ~250x
+    # slower than Base's GMP conversion at 100k digits).
+    for s in ("9"^384, "-" * "9"^385, "0"^500 * "123", "9"^5000,
+              "0"^5000 * "123", "-" * "0"^5000 * "1"^60, "0"^5000)
+        @test Parsers.parse(BigInt, s) == parse(BigInt, s)
+        @test Parsers.parse(BigInt, s).size == parse(BigInt, s).size
+    end
+    big = "9"^1_000_000
+    Parsers.parse(BigInt, big); parse(BigInt, big)      # warm up
+    partime = minimum(@elapsed(Parsers.parse(BigInt, big)) for _ in 1:3)
+    basetime = minimum(@elapsed(parse(BigInt, big)) for _ in 1:3)
+    @test partime < 10 * basetime
+    for s in ("", "-", "+", "1.5", "x", "12a")
+        @test (Parsers.tryparse(BigInt, s) === nothing) == (Parsers.tryparse(Int128, s) === nothing)
+    end
+end
+
 end # @testset "ints"
 
 @testset "bools" begin

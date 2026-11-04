@@ -163,6 +163,17 @@ end
 
 StructTypes.StructType(::Type{UndefGuy}) = StructTypes.Mutable()
 
+# a string type with no stable byte address, like InlineStrings.String15
+struct NoPointerString <: AbstractString
+    s::String
+end
+Base.ncodeunits(x::NoPointerString) = ncodeunits(x.s)
+Base.codeunit(x::NoPointerString) = UInt8
+Base.codeunit(x::NoPointerString, i::Integer) = codeunit(x.s, i)
+Base.isvalid(x::NoPointerString, i::Integer) = isvalid(x.s, i)
+Base.iterate(x::NoPointerString, i::Integer=1) = iterate(x.s, i)
+Base.cconvert(::Type{Ptr{UInt8}}, ::NoPointerString) = error("NoPointerString has no stable address")
+
 @testset "JSON3" begin
 
 @testset "read.jl" begin
@@ -415,6 +426,18 @@ mktemp() do path, io
     close(io)
     @test JSON3.read(path) == obj
     @test JSON3.read(path, Dict) == Dict("a" => 1.0, "b" => 2.0)
+end
+
+# 309: IO contents and `pretty` input are JSON text, never a file path
+mktempdir() do dir
+    cd(dir) do
+        write("123", "{\"from\":\"file\"}")
+        write("[1]", "{\"from\":\"file\"}")
+        @test JSON3.read(IOBuffer("123")) == 123
+        @test JSON3.read(IOBuffer("123"), Int) == 123
+        @test sprint(JSON3.pretty, "[1]") == "[\n    1\n]"
+        @test JSON3.read("123").from == "file"
+    end
 end
 
 # Test that writing DictType works even when length(pairs(dict_type)) isn't
@@ -831,6 +854,11 @@ obj = JSON3.read("{\"hey\":1}")
 
 @test JSON3.read("{\"hey\":1}") == JSON3.read(b"{\"hey\":1}") == JSON3.read(IOBuffer("{\"hey\":1}"))
 
+# 212: other string types are copied before parsing
+@test JSON3.read(NoPointerString("{\"hey\":\"x\"}")).hey == "x"
+@test JSON3.read(NoPointerString("{\"hey\":\"x\"}"), Dict{String, String}) == Dict("hey" => "x")
+@test sprint(JSON3.pretty, NoPointerString("[\"a\"]")) == "[\n    \"a\"\n]"
+
 arr = JSON3.read("[\"hey\",1, null, false, \"ho\", {\"a\": 1}, 2]")
 @test Base.IndexStyle(arr) == Base.IndexLinear()
 @test arr[7] == 2
@@ -996,6 +1024,12 @@ io = IOBuffer()
 JSON3.pretty(io,  JSON3.write(Dict( "x" => Inf64), allow_inf=true), allow_inf=true )
 @test String(take!(io)) == "{\n    \"x\": Infinity\n}"
 
+# 275: keys are escaped
+key = "\"a\"\\b\n"
+pretty_str = sprint(JSON3.pretty, Dict(key => 1))
+@test pretty_str == "{\n    \"\\\"a\\\"\\\\b\\n\": 1\n}"
+@test JSON3.read(pretty_str, Dict{String, Int}) == Dict(key => 1)
+
 end # @testset "pretty.jl"
 
 # parsequoted
@@ -1020,6 +1054,14 @@ json = "  1\r\n\t2"
 x = JSON3.read(json; jsonlines=true)
 @test length(x) == 2
 @test x == [1, 2]
+
+# 263: blank lines, including trailing ones, are skipped
+for json in ("1\n\n2\n\n", "1\n2\n\n\n", "1\r\n2\r\n\r\n", "1\n2\n  \n", "1\r\r2\r\r")
+    @test JSON3.read(json; jsonlines=true) == [1, 2]
+    @test JSON3.read(json, Vector{Int}; jsonlines=true) == [1, 2]
+end
+@test JSON3.read("{\"a\":1}\n\n"; jsonlines=true)[1].a == 1
+@test_throws ArgumentError JSON3.read("1 2\n"; jsonlines=true)
 
 # 171
 for d_jsonl in [

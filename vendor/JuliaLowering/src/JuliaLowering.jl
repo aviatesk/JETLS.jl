@@ -42,6 +42,33 @@ const MacroSource = isdefinedglobal(Core, :MacroSource) ? Core.MacroSource : Uni
 
 const TypeEqOf = isdefinedglobal(Core, :TypeEqOf) ? "TypeEqOf" : "Typeof"
 
+# `Base.isa_ast_node` is not defined on Julia 1.12
+@static if isdefinedglobal(Base, :isa_ast_node)
+    using Base: isa_ast_node
+else
+    function isa_ast_node(@nospecialize x)
+        return x isa Core.NewvarNode ||
+               x isa Core.CodeInfo ||
+               x isa LineNumberNode ||
+               x isa Core.GotoNode ||
+               x isa Core.GotoIfNot ||
+               x isa Core.EnterNode ||
+               x isa Core.ReturnNode ||
+               x isa Core.SSAValue ||
+               x isa Core.SlotNumber ||
+               x isa Core.Argument ||
+               x isa QuoteNode ||
+               x isa GlobalRef ||
+               x isa Core.BindingPartition ||
+               x isa Symbol ||
+               x isa Core.PiNode ||
+               x isa Core.PhiNode ||
+               x isa Core.PhiCNode ||
+               x isa Core.UpsilonNode ||
+               x isa Expr
+    end
+end
+
 # todo: remove
 const SyntaxTree = Syntax
 const IdTag = Int

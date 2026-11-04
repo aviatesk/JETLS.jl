@@ -1,10 +1,10 @@
 name = "JETLSCore"
-JuliaSyntax = "avi/base-syntax"
+JuliaSyntax = "avi/base-syntax-2026-11-02"
 version = "0.1.0"
 JET = "avi/JET-JETLS-head-2026-10-24+update-1.14"
-JuliaLowering = "avi/base-syntax"
+JuliaLowering = "avi/base-syntax-2026-11-02"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
-BaseSyntax = "avi/base-syntax"
+BaseSyntax = "avi/base-syntax-2026-11-02"
 uuid = "8d6afe4c-923b-5912-b63d-b990009c9e74"
 
 [compat]
@@ -29,59 +29,37 @@ TOML = "1.0.3"
 BaseSyntax = "0.1"
 
 [sources.JuliaSyntax]
-subdir = "vendor/JuliaSyntax"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JuliaSyntax"
 
 [sources.Glob]
-subdir = "vendor/Glob"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Glob"
 
 [sources.TOMLSource]
-subdir = "vendor/TOMLSource"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../TOMLSource"
 
 [sources.Compiler]
-subdir = "vendor/Compiler"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Compiler"
 
 [sources.JET]
-subdir = "vendor/JET"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JET"
 
 [sources.LSP]
-subdir = "vendor/LSP"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../LSP"
 
 [sources.TestRunner]
-subdir = "vendor/TestRunner"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../TestRunner"
 
 [sources.Preferences]
-subdir = "vendor/Preferences"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Preferences"
 
 [sources.PrecompileTools]
-subdir = "vendor/PrecompileTools"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../PrecompileTools"
 
 [sources.JuliaLowering]
-subdir = "vendor/JuliaLowering"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JuliaLowering"
 
 [sources.BaseSyntax]
-subdir = "vendor/BaseSyntax"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../BaseSyntax"
 
 [deps]
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"

@@ -1,4 +1,4 @@
-version = "2.8.8"
+version = "2.8.11"
 name = "Parsers"
 authors = ["quinnj <quinn.jacobd@gmail.com>"]
 uuid = "2bf889ff-109e-5fa9-9ba3-339ee07cbe67"
@@ -15,9 +15,7 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
 
 [sources.PrecompileTools]
-subdir = "vendor/PrecompileTools"
-rev = "c7630c60e95c55b2b29a69200e6295d3988909ae"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../PrecompileTools"
 
 [targets]
 test = ["Aqua", "Random", "Serialization", "Test"]

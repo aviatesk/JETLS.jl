@@ -493,21 +493,12 @@ function _has_groupmark(opts::Options, code::ReturnCode)
     return false
 end
 
-const BIGFLOAT_FALLBACK_PRECISION = 256
-
 if isdefined(Base, :OncePerTask)
     const _get_bigint = OncePerTask{BigInt}(() -> BigInt(; nbits=256))
-    # The float fallback relies on this exact working precision. The closure is
-    # required instead of the type constructor for --trim compatibility.
-    const _get_bigfloats = OncePerTask{BigFloat}(
-        () -> BigFloat(; precision=BIGFLOAT_FALLBACK_PRECISION))
 else
     # N.B This code is not thread safe in the presence of thread migration
     const BIGINT = BigInt[]
-    const BIGFLOATS = BigFloat[]
 
-    _get_bigfloats() = access_threaded(
-        () -> BigFloat(; precision=BIGFLOAT_FALLBACK_PRECISION), BIGFLOATS)
     _get_bigint() = access_threaded(() -> (@static VERSION > v"1.5" ? BigInt(; nbits=256) : BigInt()), BIGINT)
 
     function access_threaded(f, v::Vector)
@@ -526,7 +517,6 @@ else
     function __init__()
         nt = isdefined(Base.Threads, :maxthreadid) ? Threads.maxthreadid() : Threads.nthreads()
         resize!(empty!(BIGINT), nt)
-        resize!(empty!(BIGFLOATS), nt)
         return
     end
 end
