@@ -18,8 +18,8 @@ PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-BaseSyntax = {rev = "3830f58685", subdir = "BaseSyntax", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "3830f58685", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+BaseSyntax = {rev = "6c86750f62", subdir = "BaseSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "6c86750f62", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 
 [compat]
 BaseSyntax = "0.1"
