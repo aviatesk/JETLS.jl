@@ -34,18 +34,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > for example, on an optimized build, `jetls check` takes about _14%_ less time on the JETLS repository ([scripts/selfcheck.sh](https://github.com/aviatesk/JETLS.jl/blob/master/scripts/selfcheck.sh)), and _35–50%_ less on mid-sized packages such as [JSON3.jl](https://github.com/quinnj/JSON3.jl), [DataStructures.jl](https://github.com/JuliaCollections/DataStructures.jl) and [Graphs.jl](https://github.com/JuliaGraphs/Graphs.jl).
 > See [Prerequisites](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation/prerequisites) for how to run `jetls` on one.
 
-<!-- Added: 2026-10-11 / Remove after: 2026-11-11 -->
-> [!note]
-> TestRunner.jl is now developed in this repository as a [subpackage](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner) and released together with JETLS, and [aviatesk/TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) is no longer updated.
-> Installing JETLS is all you need to run tests with TestRunner.jl: the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) keeps using the TestRunner.jl bundled with JETLS, and the new [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) command runs tests with it from the command line:
-> ```bash
-> jetls test test/runtests.jl "selected tests"
-> ```
-> If you want to run TestRunner.jl without loading JETLS, install the standalone `testrunner` executable from this repository, which replaces the one installed from aviatesk/TestRunner.jl:
-> ```bash
-> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", subdir="TestRunner", rev="release")'
-> ```
-
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
 > As a temporary workaround, you can disable full-analysis for specific files using the [`analysis_overrides` initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/analysis_overrides):
