@@ -66,6 +66,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
+- Fixed false `inference/*` diagnostics, such as [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error), for errors that occur only in a method for some types of an argument without a declared type, when the call also matches a method for the argument of any type:
+  ```julia
+  # `findlast` calls the predicate with `Bool`s only for a `BitArray`
+  last_argument_error(stack) = findlast(x -> x.exception isa ArgumentError, stack) # was reported: type `Bool` has no field `exception`
+  ```
+  Such errors are now reported only through calls with arguments of the types, e.g. `last_argument_error(trues(2))`.
+  Errors for the declared types of arguments are still reported, e.g. with `stack::AbstractVector`, since a `BitVector` is an `AbstractVector`.
+  See [Signature analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/inference/signature) for details.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1018)
+
 - Fixed identifiers interpolated into the docstring of a module being resolved outside the module, although the docstring is evaluated within the module.
   Names defined or imported in the module are no longer falsely reported by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) and [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import), names defined only outside the module are now reported, and hover, go-to-definition, and other features now resolve them within the module:
   ```julia
