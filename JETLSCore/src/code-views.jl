@@ -210,7 +210,7 @@ function macro_expansion_text(server::Server, content_uri::URI)
         end
     end
     pos = offset_to_xy(fi, JS.first_byte(node))
-    (; context_module) = get_context_info(server.state, source_uri, pos)
+    (; context_module) = get_context_info(server.state, source_uri, fi, pos)
     first_line = Int(pos.line) + 1
     ex = macro_expr_from_text(JS.sourcetext(node), fi.filename, first_line)
     expanded = try
@@ -263,7 +263,7 @@ function collect_type_annotation_hints(
     startpos = offset_to_xy(fi, JS.first_byte(tree))
     endpos = offset_to_xy(fi, JS.last_byte(tree) + 1)
     tree_range = Range(; start = startpos, var"end" = endpos)
-    (; context_module, postprocessor, world) = get_context_info(state, uri, startpos)
+    (; context_module, postprocessor, world) = get_context_info(state, uri, fi, startpos)
     ctx = @something build_inferred_context_for_tree(tree, context_module;
         world, cache=fi.inferred_context_cache) return nothing
     hints = InlayHint[]

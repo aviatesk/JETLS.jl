@@ -861,6 +861,39 @@ end
         end
     end
 
+    @testset "`module` block that full analysis has not loaded" begin
+        saved = """
+        outer_value = 1
+        """
+        live = """
+        outer_value = 1
+        module NotYetLoaded
+        using Test
+        const inner_value = 1
+        @test inner_value == 1
+        end
+        outer_use() = inner_value
+        """
+        withscript(saved) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; readmsg, server)
+                JETLSCore.cache_file_info!(server, uri, 1, saved)
+                JETLSCore.cache_saved_file_info!(server.state, uri, saved)
+                JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
+                fi = JETLSCore.cache_file_info!(server, uri, 2, live)
+                @test JETLSCore.get_context_module(server.state, uri, fi,
+                    Position(; line=4, character=0)) === JETLSCore.FallbackAnalysisContext
+
+                # `@test` is not expanded in the enclosing module, and `inner_value` is not
+                # defined there
+                params = scan_live_diagnostics!(server, readmsg)[uri]
+                diagnostic = only(params.diagnostics)
+                @test diagnostic.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
+                @test diagnostic.range.start.line == 6
+            end
+        end
+    end
+
     @testset "string macro support" begin
         diagnostics = get_lowering_diagnostics("""
         let s = rand(Int)
@@ -3232,7 +3265,8 @@ end
                 JETLSCore.cache_file_info!(server, uri, 1, script)
                 JETLSCore.cache_saved_file_info!(server.state, uri, script)
                 JETLSCore.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
-                parent = JETLSCore.get_context_module(server.state, uri, Position(; line=13, character=0))
+                fi = JETLSCore.get_file_info(server.state, uri)::JETLSCore.FileInfo
+                parent = JETLSCore.get_context_module(server.state, uri, fi, Position(; line=13, character=0))
 
                 # without the per-file diagnostics cache, the unit aggregation collects the
                 # used names from the binding occurrences itself

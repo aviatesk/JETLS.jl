@@ -972,7 +972,8 @@ end
             analysis_info = JETLSCore.get_analysis_info(server.state.analysis_manager, ext_uri)
             @test analysis_info.entry isa JETLSCore.PackageExtensionAnalysisEntry
             @test !JETLSCore.has_analyzed_context(server.state, ext_uri)
-            @test JETLSCore.get_context_module(server.state, ext_uri, Position(; line=0, character=0)) === JETLSCore.FallbackAnalysisContext
+            ext_fi = JETLSCore.get_file_info(server.state, ext_uri)::JETLSCore.FileInfo
+            @test JETLSCore.get_context_module(server.state, ext_uri, ext_fi, Position(; line=0, character=0)) === JETLSCore.FallbackAnalysisContext
         end
     end
 end

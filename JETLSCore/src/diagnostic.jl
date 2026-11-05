@@ -686,10 +686,13 @@ toplevel_warning_report_to_uri(report::ToplevelWarningReport) = toplevel_warning
 toplevel_warning_report_to_uri_impl(::ToplevelWarningReport) =
     error("Missing `toplevel_warning_report_to_uri_impl(::ToplevelWarningReport)` interface")
 
-toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, fi::Union{FileInfo,SavedFileInfo}, postprocessor::JET.PostProcessor) =
-    toplevel_warning_report_to_diagnostic_impl(report, fi, postprocessor)::Diagnostic
-toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor) =
-    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor)` interface")
+toplevel_warning_report_to_diagnostic(
+    report::ToplevelWarningReport, fi::Union{FileInfo,SavedFileInfo},
+    postprocessor::JET.PostProcessor
+) = toplevel_warning_report_to_diagnostic_impl(report, fi, postprocessor)::Diagnostic
+toplevel_warning_report_to_diagnostic_impl(
+    ::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor
+) = error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::Union{FileInfo,SavedFileInfo}, ::JET.PostProcessor)` interface")
 
 function toplevel_warning_reports_to_diagnostics!(
         uri2diagnostics::URI2Diagnostics, reports::Vector{ToplevelWarningReport},
@@ -2929,13 +2932,15 @@ function foreach_effective_import(
             return traversal_no_recurse
         elseif kind === :macrocall && JS.numchildren(st0) ≥ 4
             (; context_module, world) =
-                get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+                get_context_info(state, uri, fi, offset_to_xy(fi, JS.first_byte(st0)))
             is_ateval0(context_module, world, st0) && return traversal_no_recurse
             return nothing
         end
         kind ∈ (:import, :using) || return nothing
         (; context_module, world) =
-            get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+            get_context_info(state, uri, fi, offset_to_xy(fi, JS.first_byte(st0)))
+        # an import in a `module` block that full analysis has not loaded
+        context_module === FallbackAnalysisContext && return traversal_no_recurse
         callback(st0, context_module, world)
         return traversal_no_recurse
     end
@@ -3016,6 +3021,8 @@ function compute_per_file_diagnostics(
     )
     diagnostics = Diagnostic[]
     candidates = UndefGlobalCandidate[]
+    # Let `get_context_info` reuse `st0_top`, which an unsynced `file_info` does not cache
+    get_module_blocks(file_info, st0_top)
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
     def_used_names = Dict{Module,DefUsedNames}()
     explicit_imports = skip_analysis_requiring_context ?
@@ -3033,12 +3040,15 @@ function compute_per_file_diagnostics(
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; context_module, world, analyzer, postprocessor) =
-            get_context_info(server.state, uri, pos; lookup_func)
+            get_context_info(server.state, uri, file_info, pos; lookup_func)
+        # a statement in a `module` block that full analysis has not loaded
+        skip_stmt_analysis_requiring_context =
+            skip_analysis_requiring_context || context_module === FallbackAnalysisContext
         per_stmt_diagnostics!(diagnostics, candidates, uri, file_info, st0,
             context_module, world, analyzer, postprocessor;
-            skip_analysis_requiring_context, allow_unused_underscore, soft_scope,
-            deprecated_binding_cache)
-        if !skip_analysis_requiring_context
+            skip_analysis_requiring_context = skip_stmt_analysis_requiring_context,
+            allow_unused_underscore, soft_scope, deprecated_binding_cache)
+        if !skip_stmt_analysis_requiring_context
             binding_occurrences = if lookup_func === nothing
                 get_binding_occurrences!(server.state, uri, file_info, st0)
             else

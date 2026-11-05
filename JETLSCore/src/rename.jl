@@ -94,7 +94,7 @@ function handle_PrepareRenameRequest(
     end
     fi = result
 
-    (; context_module, world) = get_context_info(state, uri, pos)
+    (; context_module, world) = get_context_info(state, uri, fi, pos)
     soft_scope = is_notebook_cell_uri(state, uri)
     return send(server,
         PrepareRenameResponse(;
@@ -216,7 +216,7 @@ function do_rename(
         server::Server, uri::URI, fi::FileInfo, pos::Position,
         newName::String, msg_id::MessageId, cancel_flag::AbstractCancelFlag;
         token::Union{Nothing,ProgressToken} = nothing)
-    (; context_module, world) = get_context_info(server.state, uri, pos)
+    (; context_module, world) = get_context_info(server.state, uri, fi, pos)
     soft_scope = is_notebook_cell_uri(server.state, uri)
     (; result, error) = @something(
         get_local_binding_rename(server, uri, fi, pos, context_module, world, newName; soft_scope),

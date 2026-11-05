@@ -1210,6 +1210,40 @@ end
     end
 end
 
+@testset "global completion in a live `module` block of an analyzed file" begin
+    # The live text extends `LiveContext` past the line range from the full analysis.
+    saved = """
+        module LiveContext
+        using Test
+        end
+        """
+    live = """
+        module LiveContext
+        using Test
+
+
+        @test│
+        end
+        """
+    withscript(saved) do script_path
+        live′, positions = JETLSCore.get_text_and_positions(live)
+        uri = filepath2uri(script_path)
+        withserver() do (; server, writereadmsg, id_counter)
+            JETLSCore.cache_file_info!(server, uri, 1, saved)
+            JETLSCore.cache_saved_file_info!(server.state, uri, saved)
+            JETLSCore.request_analysis!(server, uri, #=invalidate=#false;
+                wait=true, notify_diagnostics=false)
+            JETLSCore.cache_file_info!(server, uri, 2, live′)
+            (; raw_res) = writereadmsg(CompletionRequest(;
+                id = id_counter[] += 1,
+                params = CompletionParams(;
+                    textDocument = TextDocumentIdentifier(; uri),
+                    position = only(positions))))
+            cv_has(raw_res.result.items, ["@testset"])
+        end
+    end
+end
+
 @testset "global completion for live definitions of a file included twice" begin
     main = """
         module SharedA
@@ -1237,7 +1271,7 @@ end
                 JETLSCore.cache_saved_file_info!(server.state, main_uri, main′)
                 JETLSCore.request_analysis!(server, main_uri, #=invalidate=#false;
                     wait=true, notify_diagnostics=false)
-                JETLSCore.cache_file_info!(server, shared_uri, 1, shared_live)
+                shared_fi = JETLSCore.cache_file_info!(server, shared_uri, 1, shared_live)
                 for pos in positions
                     (; raw_res) = writereadmsg(CompletionRequest(;
                         id = id_counter[] += 1,
@@ -1246,6 +1280,9 @@ end
                             position = pos)))
                     cv_has(raw_res.result.items, ["shared_existing", "shared_live"])
                 end
+                # the module context of the file is the one that it is loaded into last
+                @test nameof(JETLSCore.get_context_module(server.state, shared_uri,
+                    shared_fi, Position(; line=0, character=0))) === :SharedB
             end
         finally
             rm(shared_path; force=true)
@@ -1289,12 +1326,14 @@ using .M1, .M2
 end
 
 @testset "`module` block named after a binding imported from multiple modules" begin
-    st0_top = jlparse("""
+    fi = JETLSCore.FileInfo(1, """
         module Shared
+        shared = 1
         end
-        """)
+        """, @__FILE__)
+    offset = JETLSCore.xy_to_offset(fi, Position(; line=1, character=0))
     world = Base.get_world_counter()
-    @test only(JETLSCore.collect_source_modules(st0_top, ambiguous_owner, world)).second ==
+    @test JETLSCore.source_module_at(fi, offset, ambiguous_owner, world) ==
         JETLSCore.SourceModule(ambiguous_owner, [:Shared])
 end
 

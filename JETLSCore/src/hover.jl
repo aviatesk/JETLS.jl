@@ -81,7 +81,7 @@ function _get_hover(
 
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; postprocessor, world) = ctx_info = get_context_info(state, uri, pos)
+    (; postprocessor, world) = ctx_info = get_context_info(state, uri, fi, pos)
     # `context_module` kwarg overrides the analysis-derived module — exposed
     # for tests so they can seed the lookup with a pre-populated module
     # without running full-analysis on the test source.

@@ -44,7 +44,7 @@ function document_highlights!(
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; context_module, world) = get_context_info(state, uri, pos)
+    (; context_module, world) = get_context_info(state, uri, fi, pos)
     soft_scope = is_notebook_cell_uri(state, uri)
 
     (; ctx3, st3, st0, binding) = @something begin

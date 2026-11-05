@@ -166,7 +166,7 @@ function type_inlay_hints!(
         startpos = offset_to_xy(fi, JS.first_byte(st0))
         endpos = offset_to_xy(fi, JS.last_byte(st0) + 1)
         overlap(Range(; start=startpos, var"end"=endpos), range) || return nothing
-        (; context_module, postprocessor, world) = get_context_info(state, uri, startpos)
+        (; context_module, postprocessor, world) = get_context_info(state, uri, fi, startpos)
         ctx = @something build_inferred_context_for_tree(st0, context_module;
             world, cache=fi.inferred_context_cache) return nothing
         collect_type_inlay_hints!(
@@ -820,7 +820,7 @@ function resolve_inlay_hint(
     fi.version == data.version || return hint
     st0_top = build_syntax_tree(fi)
     pos = offset_to_xy(fi, data.firstByte)
-    (; context_module, postprocessor, world) = get_context_info(state, data.uri, pos)
+    (; context_module, postprocessor, world) = get_context_info(state, data.uri, fi, pos)
     ctx = @something build_inferred_context_for_range(
         st0_top, context_module, type_range;
         world, cache=fi.inferred_context_cache) return hint

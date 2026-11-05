@@ -650,7 +650,7 @@ function handle_SignatureHelpRequest(
     state = server.state
     (; fi, cache_uri) = snapshot
     pos = adjust_position(snapshot, msg.params.textDocument.uri, msg.params.position)
-    (; context_module, world, postprocessor) = get_context_info(state, cache_uri, pos)
+    (; context_module, world, postprocessor) = get_context_info(state, cache_uri, fi, pos)
     b = xy_to_offset(fi, pos)
     no_active_parameter_support = supports(state,
         :textDocument, :signatureHelp, :signatureInformation, :noActiveParameterSupport)

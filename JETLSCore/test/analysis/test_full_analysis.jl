@@ -623,7 +623,7 @@ function populate_analysis_context_caches!(server::JETLSCore.Server, uri::URI)
     JETLSCore.get_per_file_diagnostics!(server, uri, fi, JETLSCore.DUMMY_CANCEL_FLAG)
     st0_top = JETLSCore.build_syntax_tree(fi)
     st0 = JETLSCore.lowerable_toplevel_at(st0_top, 1)
-    mod = JETLSCore.get_context_module(server.state, uri, Position(; line=0, character=0))
+    mod = JETLSCore.get_context_module(server.state, uri, fi, Position(; line=0, character=0))
     JETLSCore.build_inferred_context_for_range(st0_top, mod, JETLSCore.JS.byte_range(st0);
         cache=fi.inferred_context_cache)
     @test haskey(JETLSCore.load(server.state.binding_occurrences_cache), uri)
@@ -815,10 +815,13 @@ end
                 @test Set(keys(result.analyzed_file_infos)) ==
                     Set([entry_uri, allowed_uri, outside_uri])
                 pos = Position(; line=0, character=0)
+                allowed_saved = JETLSCore.get_saved_file_info(state, allowed_uri)::JETLSCore.SavedFileInfo
+                allowed_fi = JETLSCore.FileInfo(1, allowed_saved.parsed_stream, allowed_uri)
+                outside_fi = JETLSCore.get_unsynced_file_info!(state, outside_uri)::JETLSCore.FileInfo
                 @test Base.invoke_in_world(result.world, getglobal,
-                    JETLSCore.get_context_module(result, allowed_uri, pos), :saved_value) == 1
+                    JETLSCore.get_context_module(result, allowed_uri, allowed_fi, pos), :saved_value) == 1
                 @test Base.invoke_in_world(result.world, getglobal,
-                    JETLSCore.get_context_module(result, outside_uri, pos), :outside_value) == 42
+                    JETLSCore.get_context_module(result, outside_uri, outside_fi, pos), :outside_value) == 42
 
                 state.init_options = JETLSCore.merge_init_options(state.init_options,
                     JETLSCore.InitOptions(; analysis_overrides=[allow_entry, deny, allow_include]))
@@ -1024,8 +1027,9 @@ end
                 @test any(mentions("factor"), raw_res.params.diagnostics)
             end
             standalone = JETLSCore.get_analysis_info(manager, utils_uri)::JETLSCore.AnalysisResult
-            standalone_scaled = let mod = JETLSCore.get_context_module(
-                    standalone, utils_uri, Position(; line=0, character=0))
+            standalone_scaled = let mod = JETLSCore.get_context_module(standalone, utils_uri,
+                    JETLSCore.get_file_info(server.state, utils_uri)::JETLSCore.FileInfo,
+                    Position(; line=0, character=0))
                 f = Base.invoke_in_world(standalone.world, getglobal, mod, :scaled)
                 only(Base.invoke_in_world(standalone.world, methods, f))
             end
@@ -1204,6 +1208,14 @@ end
             @test isempty(result.uri2diagnostics[pkg_uri])
             @test haskey(result.analyzed_file_infos, filepath2uri(other_path))
             @test haskey(result.analyzed_file_infos, filepath2uri(sub_path))
+
+            fi = JETLSCore.get_unsynced_file_info!(server.state, pkg_uri)::JETLSCore.FileInfo
+            pkgmod = JETLSCore.get_context_module(result, pkg_uri, fi,
+                Position(; line=1, character=0))
+            @test nameof(pkgmod) === Symbol(pkgname)
+            @test JETLSCore.get_context_module(result, pkg_uri, fi,
+                Position(; line=5, character=0)) ===
+                Base.invoke_in_world(result.world, getglobal, pkgmod, :Sub)
         end
     end
 end
@@ -1287,5 +1299,124 @@ end
         @test has_argument_symbol(server, main_uri, broken_uri, broken_code)
     end
 end
+
+@testset "get_context_module of `OutOfScope`" begin
+    fi = JETLSCore.FileInfo(1, """
+        x = 1
+        module A
+        y = 2
+        module B
+        v = 5
+        end
+        end
+        module Undefined
+        z = 3
+        end
+        module module_range_target
+        w = 4
+        end
+        module Base
+        b = 5
+        end
+        module C
+        c = 6
+        end
+        module C
+        c = 7
+        end
+        """, @__FILE__)
+    uri = filepath2uri(@__FILE__)
+    oos = JETLSCore.OutOfScope(module_range_target)
+    context_module(line::Int) =
+        JETLSCore.get_context_module(oos, uri, fi, Position(; line, character=0))
+    @test context_module(0) === module_range_target
+    @test context_module(2) === module_range_target.A
+    @test context_module(4) === module_range_target.A.B
+    # the pseudo context keeps the enclosing module for a block it does not define
+    @test context_module(8) === module_range_target
+    # a block of the module itself, like a package entry file that Revise records as
+    # `include`d into the package module
+    @test context_module(11) === module_range_target
+    # `Base` is only visible in the module, and which block of `C` defines it is unknown
+    @test context_module(14) === module_range_target
+    @test context_module(17) === module_range_target
+    @test context_module(20) === module_range_target
+end
+
+@testset "get_context_module of a `module` block that full analysis has not loaded" begin
+    saved = """
+        using Test
+        """
+    live = """
+        using Test
+        module Test
+        test_value = 1
+        end
+        """
+    withscript(saved) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server)
+            JETLSCore.cache_file_info!(server, uri, 1, saved)
+            JETLSCore.cache_saved_file_info!(server.state, uri, saved)
+            JETLSCore.request_analysis!(server, uri, #=invalidate=#false;
+                wait=true, notify_diagnostics=false)
+            fi = JETLSCore.cache_file_info!(server, uri, 2, live)
+            # the `Test` that the file imports is not the module of the block
+            @test JETLSCore.get_context_module(server.state, uri, fi,
+                Position(; line=2, character=0)) === JETLSCore.FallbackAnalysisContext
+        end
+    end
+end
+
+@static if JETLSCore.JETLS_DEV_MODE
+@testset "module context of out-of-scope files tracked by Revise" begin
+    pkg_code = """
+        module TestReviseOutOfScope
+        module Sub
+        include("sub.jl")
+        end
+        end
+        """
+    pkg_setup = function ()
+        write(normpath(dirname(Pkg.project().path), "src", "sub.jl"), """
+            sub_func() = nothing
+            module Inner
+            inner_func() = nothing
+            end
+            """)
+    end
+    withpackage("TestReviseOutOfScope", pkg_code; pkg_setup) do pkg_path
+        pkgmod = Pkg.activate(pkg_path) do
+            Base.require(Base.identify_package("TestReviseOutOfScope")::Base.PkgId)
+        end
+        JETLSCore.Revise.watch_package(Base.PkgId(pkgmod))
+        main_uri = filepath2uri(normpath(pkg_path, "src", "TestReviseOutOfScope.jl"))
+        sub_uri = filepath2uri(normpath(pkg_path, "src", "sub.jl"))
+        mktempdir() do workspace_dir
+            state = JETLSCore.ServerState()
+            state.root_path = workspace_dir
+
+            let oos = JETLSCore.find_analysis_env_path(state, main_uri)::JETLSCore.OutOfScope
+                fi = JETLSCore.get_unsynced_file_info!(state, main_uri)::JETLSCore.FileInfo
+                @test oos.module_context === pkgmod
+                @test JETLSCore.get_context_module(oos, main_uri, fi,
+                    Position(; line=0, character=0)) === pkgmod
+                @test JETLSCore.get_context_module(oos, main_uri, fi,
+                    Position(; line=2, character=0)) === pkgmod.Sub
+            end
+
+            let oos = JETLSCore.find_analysis_env_path(state, sub_uri)::JETLSCore.OutOfScope
+                fi = JETLSCore.get_unsynced_file_info!(state, sub_uri)::JETLSCore.FileInfo
+                @test oos.module_context === pkgmod.Sub
+                @test JETLSCore.get_context_module(oos, sub_uri, fi,
+                    Position(; line=0, character=0)) === pkgmod.Sub
+                @test JETLSCore.get_context_module(oos, sub_uri, fi,
+                    Position(; line=2, character=0)) === pkgmod.Sub.Inner
+                @test JETLSCore.collect_search_uris(sub_uri, oos) == Set((main_uri, sub_uri))
+            end
+        end
+    end
+end
+end # @static if JETLSCore.JETLS_DEV_MODE
 
 end # module test_full_analysis

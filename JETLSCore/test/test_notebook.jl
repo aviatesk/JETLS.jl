@@ -672,9 +672,9 @@ end
 
             # Analysis is not snapshotted; dispatch must use the captured notebook URI.
             JETLSCore.cache_out_of_scope!(state.analysis_manager, notebook_uri, JETLSCore.OutOfScope(M_snapshot))
-            @test JETLSCore.get_context_info(state, snapshot.cache_uri, global_pos).context_module === M_snapshot
+            @test JETLSCore.get_context_info(state, snapshot.cache_uri, snapshot.fi, global_pos).context_module === M_snapshot
             if change_kind === :remove_requested
-                @test JETLSCore.get_context_info(state, cell2, pos).context_module !== M_snapshot
+                @test JETLSCore.get_context_info(state, cell2, snapshot.fi, pos).context_module !== M_snapshot
             end
             response = dispatch_snapshot_request(server, recorder, prepared)
             @test response isa SignatureHelpResponse

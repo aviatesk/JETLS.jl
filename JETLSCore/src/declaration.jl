@@ -67,7 +67,7 @@ function find_declaration(
     state = server.state
     st0 = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; context_module, world) = get_context_info(state, uri, pos)
+    (; context_module, world) = get_context_info(state, uri, fi, pos)
 
     binding_result = select_target_binding(
         st0, offset, context_module, world; soft_scope)

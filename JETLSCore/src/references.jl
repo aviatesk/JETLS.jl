@@ -84,7 +84,7 @@ function find_references(
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; context_module, world) = get_context_info(server.state, uri, pos)
+    (; context_module, world) = get_context_info(server.state, uri, fi, pos)
     soft_scope = is_notebook_cell_uri(server.state, uri)
     locations = Location[]
 

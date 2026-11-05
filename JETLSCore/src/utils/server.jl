@@ -377,14 +377,16 @@ end
 is_synchronized(s::ServerState, uri::URI) = haskey(load(s.file_cache), uri)
 
 """
-    get_context_info(state::ServerState, uri::URI, pos::Union{Nothing,Position}) ->
-        (; context_module, world, analyzer, postprocessor)
+    get_context_info(
+        state::ServerState, uri::URI, fi::FileInfo, pos::Union{Nothing,Position}
+    ) -> (; context_module, world, analyzer, postprocessor)
 
-Extract context information for a given position in a file, or for the top level of the
-file, outside any `module` block, when `pos` is `nothing`.
+Extract context information for a given position `pos` in the text of `fi`, or for the top
+level of the file, outside any `module` block, when `pos` is `nothing`.
 
 Returns a named tuple containing:
 - `context_module::Module`: The module context at the given position
+  (see [`get_context_module`](@ref))
 - `world::UInt`: The world age to pin reflection and inference to. When an `AnalysisResult`
   is cached for this URI, this is the world at which that analysis context was produced —
   pinning to it keeps a request consistent with the cached analysis even if a concurrent
@@ -395,7 +397,8 @@ Returns a named tuple containing:
   to recognize, which are caused by JET implementation details
 """
 function get_context_info(
-        state::ServerState, uri::URI, pos::Union{Nothing,Position}; lookup_func=nothing
+        state::ServerState, uri::URI, fi::FileInfo, pos::Union{Nothing,Position};
+        lookup_func=nothing
     )
     lookup_uri = canonical_cache_uri(state, uri)
     if lookup_func !== nothing
@@ -403,54 +406,61 @@ function get_context_info(
     else
         analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
     end
-    context_module = get_context_module(analysis_info, lookup_uri, pos)
+    context_module = get_context_module(analysis_info, lookup_uri, fi, pos)
     world = get_context_world(analysis_info)
     analyzer = get_context_analyzer(analysis_info, lookup_uri)
     postprocessor = get_post_processor(analysis_info)
     return (; context_module, world, analyzer, postprocessor)
 end
 
-get_context_module(::Nothing, ::URI, ::Union{Nothing,Position}) = FallbackAnalysisContext
-# Use `@something` instead of `something` due to https://github.com/JuliaLang/julia/pull/60857
-# `something` can be used after 1.12.5
-get_context_module(oos::OutOfScope, ::URI, ::Union{Nothing,Position}) =
-    something(oos.module_context, FallbackAnalysisContext)
+"""
+    get_context_module(
+        analysis_info, uri::URI, fi::FileInfo, pos::Union{Nothing,Position}
+    ) -> Module
+
+Return the module that the code at `pos` in the text of `fi` belongs to, or the module of
+the file's top level (see [`get_file_module`](@ref)) when `pos` is `nothing`. The module of
+the file's top level comes from `analysis_info`, while the `module` blocks enclosing `pos`
+are resolved from the text of `fi` (see [`source_module_at`](@ref)), so that the context
+follows edits that full analysis has not loaded yet.
+
+In a file that full analysis has analyzed, a `module` block that full analysis has not
+loaded gives `FallbackAnalysisContext`. The pseudo context of an `OutOfScope` keeps the
+enclosing module instead, since the file is not loaded into it, e.g. the module that
+`analysis_overrides` specifies for a test file wrapped in its own `module` block.
+"""
+get_context_module(::Nothing, ::URI, ::FileInfo, ::Union{Nothing,Position}) =
+    FallbackAnalysisContext
 function get_context_module(
-        analysis_result::AnalysisResult, uri::URI, pos::Union{Nothing,Position}
+        oos::OutOfScope, ::URI, fi::FileInfo, pos::Union{Nothing,Position}
+    )
+    filemod = something(oos.module_context, FallbackAnalysisContext)
+    pos === nothing && return filemod
+    world = Base.get_world_counter()
+    return source_module_at(fi, xy_to_offset(fi, pos), filemod, world).mod
+end
+function get_context_module(
+        analysis_result::AnalysisResult, uri::URI, fi::FileInfo, pos::Union{Nothing,Position}
     )
     _has_analyzed_context(analysis_result, uri) || return FallbackAnalysisContext
-    safi = analyzed_file_info(analysis_result, uri)::JET.AnalyzedFileInfo
-    curmod = Main
-    if pos === nothing
-        # the range of the top level of the file contains the ranges of the modules in it
-        currange = 1:0
-        for (range, mod) in safi.module_range_infos
-            if currange ⊆ range
-                curmod = mod
-                currange = range
-            end
-        end
-    else
-        curline = Int(pos.line) + 1
-        currange = 0:typemax(Int)
-        for (range, mod) in safi.module_range_infos
-            curline in range || continue
-            if range ⊆ currange
-                curmod = mod
-                currange = range
-            end
-        end
-    end
-    return curmod
+    filemod = get_file_module(analysis_result, uri)
+    pos === nothing && return filemod
+    offset = xy_to_offset(fi, pos)
+    source_module = source_module_at(fi, offset, filemod, analysis_result.world)
+    isempty(source_module.path) || return FallbackAnalysisContext
+    return source_module.mod
 end
-function get_context_module(state::ServerState, uri::URI, pos::Position; lookup_func=nothing)
+function get_context_module(
+        state::ServerState, uri::URI, fi::FileInfo, pos::Union{Nothing,Position};
+        lookup_func=nothing
+    )
     lookup_uri = canonical_cache_uri(state, uri)
     if lookup_func !== nothing
         analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
     else
         analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
     end
-    return get_context_module(analysis_info, lookup_uri, pos)
+    return get_context_module(analysis_info, lookup_uri, fi, pos)
 end
 
 """
@@ -506,28 +516,37 @@ Base.:(==)(a::SourceModule, b::SourceModule) = a.mod === b.mod && a.path == b.pa
 Base.hash(sm::SourceModule, h::UInt) = hash(sm.path, hash(sm.mod, hash(SourceModule, h)))
 
 """
-    collect_source_modules(st0_top::SyntaxTree, filemod::Module, world::UInt)
-        -> Vector{Pair{UnitRange{Int},SourceModule}}
+    source_module_at(fi::FileInfo, offset::Int, filemod::Module, world::UInt) -> SourceModule
 
-Collect the byte range of each `module` block that `iterate_toplevel_tree` descends into,
-from its docstring to the end of its body, paired with its [`SourceModule`](@ref) resolved
-from `filemod`, the module that the top level of the file belongs to. Enclosing blocks
-come before nested ones.
+Return the [`SourceModule`](@ref) of the code at `offset` in the text of `fi`, resolving the
+`module` blocks enclosing it from `filemod`, the module that the top level of the file
+belongs to.
 """
-function collect_source_modules(st0_top::SyntaxTree, filemod::Module, world::UInt)
-    blocks = collect_module_blocks(st0_top)
-    source_modules = Pair{UnitRange{Int},SourceModule}[]
-    for (index, block) in enumerate(blocks)
-        parent = block.parent == 0 ?
-            SourceModule(filemod, Symbol[]) : last(source_modules[block.parent])
-        submod = isempty(parent.path) && !is_ambiguous_module_block(blocks, index) ?
-            resolve_submodule(parent.mod, block.name, world) : nothing
-        source_module = submod === nothing ?
-            SourceModule(parent.mod, Symbol[parent.path; block.name]) :
-            SourceModule(submod, Symbol[])
-        push!(source_modules, (first(block.range):last(block.body)) => source_module)
+function source_module_at(fi::FileInfo, offset::Int, filemod::Module, world::UInt)
+    blocks = get_module_blocks(fi)
+    # At an unfinished module's EOF, the cursor is just past the body's last byte.
+    index = something(findlast(blocks) do block::ModuleBlock
+        first(block.range) ≤ offset ≤ last(block.body) + 1
+    end, 0)
+    chain = Int[]
+    while index ≠ 0
+        push!(chain, index)
+        index = blocks[index].parent
     end
-    return source_modules
+    mod = filemod
+    path = Symbol[]
+    for i = length(chain):-1:1
+        name = blocks[chain[i]].name
+        if isempty(path) && !is_ambiguous_module_block(blocks, chain[i])
+            submod = resolve_submodule(mod, name, world)
+            if submod !== nothing
+                mod = submod
+                continue
+            end
+        end
+        push!(path, name)
+    end
+    return SourceModule(mod, path)
 end
 
 # The current binding comes from only one of the sibling `module` blocks of the same name,
@@ -553,11 +572,21 @@ function resolve_submodule(mod::Module, name::Symbol, world::UInt)
 end
 
 """
-    collect_module_blocks(st0_top::SyntaxTree) -> Vector{ModuleBlock}
+    get_module_blocks(fi::FileInfo, [st0_top::SyntaxTree]) -> Vector{ModuleBlock}
 
-Collect the `module` blocks in `st0_top` that `iterate_toplevel_tree` descends into, where
-enclosing blocks come before nested ones.
+Return the `module` blocks in the text of `fi` that `iterate_toplevel_tree` descends into,
+where enclosing blocks come before nested ones. The first call for `fi` collects them from
+`st0_top` if given, or from `build_syntax_tree(fi)` otherwise.
 """
+function get_module_blocks(fi::FileInfo, st0_top::Union{Nothing,SyntaxTree} = nothing)
+    cache = fi.module_blocks_cache
+    blocks = @atomic cache.blocks
+    blocks === nothing || return blocks
+    blocks = collect_module_blocks(@something(st0_top, build_syntax_tree(fi)))
+    @atomic cache.blocks = blocks
+    return blocks
+end
+
 collect_module_blocks(st0_top::SyntaxTree) = collect_module_blocks!(ModuleBlock[], st0_top, 0)
 
 function collect_module_blocks!(
@@ -587,18 +616,6 @@ function collect_module_blocks!(
         end
     end
     return blocks
-end
-
-function source_module_at(
-        source_modules::Vector{Pair{UnitRange{Int},SourceModule}}, offset::Int,
-        filemod::Module
-    )
-    for i = length(source_modules):-1:1
-        range, source_module = source_modules[i]
-        # At an unfinished module's EOF, the cursor is just past the body's last byte.
-        first(range) ≤ offset ≤ last(range) + 1 && return source_module
-    end
-    return SourceModule(filemod, Symbol[])
 end
 
 get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)

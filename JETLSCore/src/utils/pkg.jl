@@ -104,7 +104,8 @@ function find_analysis_env_path(state::ServerState, uri::URI)
         if !state.cli_mode
             isdefined(state, :root_path) || return nothing
             if !issubdir(dirname(filepath), state.root_path)
-                return OutOfScope()
+                filemod = @something revise_file_module(filepath) return OutOfScope()
+                return OutOfScope(filemod)
             end
         end
         return find_env_path(filepath)

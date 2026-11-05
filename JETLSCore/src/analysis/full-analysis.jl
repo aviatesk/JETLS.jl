@@ -1374,42 +1374,45 @@ end
 # to `filemod`, and each `module` block to its own module.
 function collect_module_range_infos(st0_top::SyntaxTree, filemod::Module, world::UInt)
     module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
-    collect_module_range_infos!(module_range_infos, st0_top, filemod, world)
+    sourcefile = JS.sourcefile(st0_top)
+    sourcefile isa JS.SourceFile || return module_range_infos
+    blocks = collect_module_blocks(st0_top)
+    # Enclosing blocks come first, so the module of `block.parent` is already resolved.
+    mods = Vector{Union{Nothing,Module}}(nothing, length(blocks))
+    for (i, block) in enumerate(blocks)
+        parentmod = block.parent == 0 ? filemod : mods[block.parent]
+        parentmod === nothing && continue
+        mod = @something resolve_submodule(parentmod, block.name, world) continue
+        mods[i] = mod
+        first_line = JS.source_line(sourcefile, first(block.range))
+        last_line = JS.source_line(sourcefile, last(block.range))
+        push!(module_range_infos, first_line:last_line => mod)
+    end
     return module_range_infos
 end
 
-function collect_module_range_infos!(
-        module_range_infos::Vector{Pair{UnitRange{Int},Module}}, st0::SyntaxTree,
-        context_module::Module, world::UInt;
-        range_st0::SyntaxTree = st0
-    )
-    if JS.head(st0) === :toplevel
-        for i = 1:JS.numchildren(st0)
-            collect_module_range_infos!(module_range_infos, st0[i], context_module, world)
+"""
+    revise_file_module(filepath::String) -> Union{Nothing,Module}
+
+Return the module that Revise records the file at `filepath` to be `include`d into, if the
+file is a source file of a package that Revise tracks, e.g. a dependency loaded by full
+analysis.
+"""
+function revise_file_module(filepath::String)
+    Revise === nothing && return nothing
+    @lock Revise.revise_lock for pkgdata in values(Revise.pkgdatas)
+        basedir = Revise.basedir(pkgdata)
+        issubdir(filepath, basedir) || continue
+        filemod = nothing
+        for (file, fi) in zip(Revise.srcfiles(pkgdata), pkgdata.fileinfos)
+            paths_equal(joinpath(basedir, file), filepath) || continue
+            # Revise guarantees the first key to be the module the file is `include`d into
+            mod, _ = first(fi.mod_exs_infos)
+            # A file `include`d into multiple modules has no single module context
+            filemod === nothing || filemod === mod || return nothing
+            filemod = mod
         end
-    elseif is_doc0_any(st0)
-        for i = 3:JS.numchildren(st0)
-            # the docstring of a module is evaluated within the module
-            collect_module_range_infos!(module_range_infos, st0[i], context_module, world; range_st0 = st0)
-        end
-    elseif JS.head(st0) === :module
-        module_name = @something module_name_node(st0) return nothing
-        module_name === st0[end] && return nothing
-        modconst = resolve_global_const(context_module, world, module_name)
-        modconst isa Core.Const || return nothing
-        mod = modconst.val
-        mod isa Module || return nothing
-        sourcefile = JS.sourcefile(st0)
-        sourcefile isa JS.SourceFile || return nothing
-        first_line = JS.source_line(sourcefile, JS.first_byte(range_st0))
-        last_line = JS.source_line(sourcefile, JS.last_byte(st0))
-        push!(module_range_infos, first_line:last_line => mod)
-        body = st0[end]
-        if JS.head(body) === :block
-            for i = 1:JS.numchildren(body)
-                collect_module_range_infos!(module_range_infos, body[i], mod, world)
-            end
-        end
+        filemod === nothing || return filemod
     end
     return nothing
 end

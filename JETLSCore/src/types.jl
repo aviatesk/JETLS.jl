@@ -126,6 +126,10 @@ struct ModuleBlock
     parent::Int
 end
 
+mutable struct ModuleBlocksCache
+    @atomic blocks::Union{Nothing,Vector{ModuleBlock}}
+end
+
 # Current text snapshot for both synchronized documents and on-demand unsynced workspace
 # files, plus per-snapshot caches derived from the parsed stream.
 struct FileInfo
@@ -158,6 +162,9 @@ struct FileInfo
     # O(N) line scan once per FileInfo (constructed on didOpen / didChange) is a
     # net win across the server.
     line_starts::LineStartsIndex
+    # The `module` blocks of the text, collected on first use by `get_module_blocks`, which
+    # also serves unsynced files without retaining their `st0`.
+    module_blocks_cache::ModuleBlocksCache
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
@@ -173,7 +180,8 @@ struct FileInfo
         end
         line_starts = build_line_starts(parsed_stream.textbuf)
         new(unique_id("FileInfo"), version, parsed_stream, filename, encoding,
-            testsetinfos, syntax_tree0, inferred_context_cache, line_starts)
+            testsetinfos, syntax_tree0, inferred_context_cache, line_starts,
+            ModuleBlocksCache(nothing))
     end
 end
 @define_override_constructor FileInfo # For testsetinfos update

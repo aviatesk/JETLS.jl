@@ -126,7 +126,7 @@ mutable struct CompletionCtx
         )
         (; fi, cache_uri) = snapshot
         st0_top = build_syntax_tree(fi)
-        info = get_context_info(state, cache_uri, pos)
+        info = get_context_info(state, cache_uri, fi, pos)
         context_mod = something(context_module, info.context_module)
         offset = xy_to_offset(fi, pos)
         soft_scope = cache_uri != request_uri
@@ -482,9 +482,9 @@ end
 # to `scope`, which full-analysis may not reflect yet (e.g. unsaved definitions).
 # Unsynchronized files are skipped: full-analysis loads their on-disk contents, and lowering
 # all of them would delay completion.
-# Top-level statements are attributed by the `module` blocks enclosing them rather than by
-# `binfo.mod`, which comes from the line ranges of the last full analysis: those ranges
-# drift while editing, and are missing in the fallback context.
+# Top-level statements are attributed by their `SourceModule` rather than by `binfo.mod`,
+# which is the same `FallbackAnalysisContext` for every `module` block that full analysis
+# has not loaded, e.g. all those of a file without full analysis.
 function live_global_names(comp_ctx::CompletionCtx, scope::SourceModule)
     (; state, snapshot, world, cancel_flag) = comp_ctx
     names = Set{Symbol}()
@@ -493,16 +493,12 @@ function live_global_names(comp_ctx::CompletionCtx, scope::SourceModule)
         is_cancelled(cancel_flag) && break
         fi = uri == snapshot.cache_uri ? snapshot.fi :
             @something get_file_info(state, uri) continue
-        st0_top = build_syntax_tree(fi)
         # a file `include`d into multiple modules introduces its globals to each of them
         filemods = get_file_modules(get_analysis_info(state.analysis_manager, uri), uri)
-        source_modules = map(filemods) do filemod::Module
-            filemod => collect_source_modules(st0_top, filemod, world)
-        end
-        iterate_toplevel_tree(st0_top) do st0::SyntaxTree
+        iterate_toplevel_tree(build_syntax_tree(fi)) do st0::SyntaxTree
             is_cancelled(cancel_flag) && return traversal_terminator
-            any(source_modules) do (filemod, source_modules′)
-                source_module_at(source_modules′, JS.first_byte(st0), filemod) == scope
+            any(filemods) do filemod::Module
+                source_module_at(fi, JS.first_byte(st0), filemod, world) == scope
             end || return
             binding_occurrences = @something get_binding_occurrences!(state, uri, fi, st0) return
             for (binfo, occurrences) in binding_occurrences
@@ -517,11 +513,10 @@ function live_global_names(comp_ctx::CompletionCtx, scope::SourceModule)
 end
 
 function cursor_source_module(comp_ctx::CompletionCtx)
-    (; state, snapshot, st0_top, world) = comp_ctx
+    (; state, snapshot, world) = comp_ctx
     filemod = get_file_module(
         get_analysis_info(state.analysis_manager, snapshot.cache_uri), snapshot.cache_uri)
-    source_modules = collect_source_modules(st0_top, filemod, world)
-    return source_module_at(source_modules, comp_ctx.offset, filemod)
+    return source_module_at(snapshot.fi, comp_ctx.offset, filemod, world)
 end
 
 # Property completions

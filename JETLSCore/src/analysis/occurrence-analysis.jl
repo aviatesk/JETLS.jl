@@ -491,7 +491,7 @@ function compute_full_binding_occurrences(
         # lowering requires `soft_scope`.
         is_notebook_uri(state, uri)
     pos = offset_to_xy(fi, JS.first_byte(st0))
-    (; context_module, world) = get_context_info(state, uri, pos; lookup_func)
+    (; context_module, world) = get_context_info(state, uri, fi, pos; lookup_func)
 
     if JS.head(st0) in (:export, :public, :import, :using)
         # `import`/`using`/`export`/`public` declarations are collected from the source tree

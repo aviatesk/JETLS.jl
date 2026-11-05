@@ -63,7 +63,7 @@ function find_type_definition(server::Server, uri::URI, fi::FileInfo, pos::Posit
     node = @something select_target_for_type_query(st0_top, offset) return nothing
 
     rng = JS.byte_range(node)
-    (; context_module, world) = get_context_info(state, uri, pos)
+    (; context_module, world) = get_context_info(state, uri, fi, pos)
     ctx = @something build_inferred_context_for_range(st0_top, context_module, rng;
         world, cache=fi.inferred_context_cache) return nothing
     typ = @something get_type_for_range(ctx, rng) return nothing
@@ -109,9 +109,8 @@ end
 
 # Search the document symbol cache for a type-declaration symbol whose name
 # matches `T` and whose enclosing module is `parentmodule(T)`. Each analyzed
-# file is checked: `module_range_infos` tells us which line ranges of the file
-# map to which module, so a name-only collision in another module is filtered
-# via `get_context_module`.
+# file where full analysis loaded `parentmodule(T)` is checked, and a name-only
+# collision in another module is filtered via `get_context_module`.
 function type_locations_from_document_symbols(
         state::ServerState, origin_uri::URI, @nospecialize(T)
     )
@@ -133,7 +132,7 @@ function type_locations_from_document_symbols(
         end continue
         symbols = get_document_symbols!(state, uri, fi)
         collect_type_symbol_locations!(
-            locations, symbols, info, uri, target_module, target_name,
+            locations, symbols, info, uri, fi, target_module, target_name,
             state, origin_uri)
     end
     return locations
@@ -141,18 +140,18 @@ end
 
 function collect_type_symbol_locations!(
         locations::Vector{Location}, symbols::Vector{DocumentSymbol}, info::AnalysisResult,
-        uri::URI, target_module::Module, target_name::AbstractString, state::ServerState,
-        origin_uri::URI
+        uri::URI, fi::FileInfo, target_module::Module, target_name::AbstractString,
+        state::ServerState, origin_uri::URI
     )
     for sym in symbols
         if is_type_definition_symbol_kind(sym.kind) && sym.name == target_name &&
-                get_context_module(info, uri, sym.range.start) === target_module
+                get_context_module(info, uri, fi, sym.range.start) === target_module
             push!(locations, unadjust_location(state, origin_uri,
                 Location(; uri, range = sym.selectionRange)))
         end
         children = @something sym.children continue
         collect_type_symbol_locations!(
-            locations, children, info, uri, target_module, target_name,
+            locations, children, info, uri, fi, target_module, target_name,
             state, origin_uri)
     end
     return locations

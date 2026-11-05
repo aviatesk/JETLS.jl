@@ -160,7 +160,7 @@ function find_definition(
     path_jump = find_path_string_definition(uri, st0, offset)
     path_jump === nothing || return path_jump
 
-    (; world) = ctx_info = get_context_info(state, uri, pos)
+    (; world) = ctx_info = get_context_info(state, uri, fi, pos)
     # `context_module` kwarg overrides the analysis-derived module — exposed
     # for tests so they can seed the lookup with a pre-populated module
     # without running full-analysis on the test source.

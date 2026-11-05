@@ -432,6 +432,13 @@ names also offers the global names defined by the current contents of files
 in the same analysis unit. Hover and type inlay hints also run type inference
 on the current top-level form on demand in that context.
 
+Within a file, live analysis takes the module of each part of the code from the
+`module` blocks in the current contents, so the module context follows your
+edits before you save them. A `module` block that full analysis has not loaded
+yet, such as one you have just added, is analyzed in the fallback context
+described in [Files without full analysis](@ref analysis/live/fallback) until
+full analysis loads it, e.g. when you save the file.
+
 ### [Files without full analysis](@id analysis/live/fallback)
 
 Full analysis does not cover the following files:

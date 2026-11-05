@@ -87,6 +87,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed completion of global names offering names that open files define in a different `module` block, e.g. a function of the enclosing module inside a nested `module` block.
   This happened in particular in [files without full analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/live/fallback), and near the boundaries of `module` blocks after edits that are not saved yet.
 
+- Fixed completion, hover, [`lowering/*`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering) diagnostics, and other features of [live analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/live) treating code as part of a different module after edits that move or extend a `module` block, until the file is saved.
+
+- Fixed incorrect diagnostics for a `module` block that full analysis has not loaded yet, such as one added since the last save, which was analyzed as part of the enclosing module:
+  ```julia
+  module NotYetLoaded
+  using Test
+  const value = 1
+  @test value == 1  # no longer reported as `lowering/macro-expansion-error`
+  end
+  use() = value     # now reported as `lowering/undef-global-var`
+  ```
+  Such a block is now analyzed in the [fallback context](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/live/fallback) until full analysis loads it, e.g. when you save the file.
+
 ## 2026-11-04
 
 - Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)
