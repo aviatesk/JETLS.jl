@@ -82,6 +82,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed full-analysis diagnostics for code within a module with a docstring being reported at the `module` line instead of the code that caused them.
 
+- Fixed [type inlay hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types), hover, and other features that show inferred types failing on Julia 1.14 and later for code that uses `ccall`, such as the `Sockets` standard library.
+
 ## 2026-11-04
 
 - Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)
