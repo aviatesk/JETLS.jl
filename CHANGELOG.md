@@ -66,6 +66,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
+- Fixed identifiers interpolated into the docstring of a module being resolved outside the module, although the docstring is evaluated within the module.
+  Names defined or imported in the module are no longer falsely reported by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) and [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import), names defined only outside the module are now reported, and hover, go-to-definition, and other features now resolve them within the module:
+  ```julia
+  """
+  $(EXPORTS)
+  """
+  module Foo
+  using DocStringExtensions: EXPORTS  # was reported as `lowering/unused-import`
+  f(x) = 2x
+  export f
+  end
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1035)
+
+- Fixed full-analysis diagnostics for code within a module with a docstring being reported at the `module` line instead of the code that caused them.
+
 ## 2026-11-04
 
 - Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)
