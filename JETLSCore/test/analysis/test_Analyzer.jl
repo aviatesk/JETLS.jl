@@ -1996,6 +1996,20 @@ function check_maybe_undef_box(b::MaybeUndefBox)
     isdefined(b, :v) || sin("julia")
     return nothing
 end
+named(s::Symbol) = !isempty(string(s))
+named(s::AbstractString) = !isempty(s)
+hasname(::Nothing) = false
+hasname(s::Symbol) = !isempty(string(s))
+hasname(s::AbstractString) = !isempty(s)
+is_int_or_string(x) = x isa Union{Int,String}
+is_int_or_string_overloaded(x) = x isa Union{Int,String}
+is_int_or_string_overloaded(::Int) = true
+is_int_or_string_overloaded(::String) = true
+is_int_or_some_string(::Int) = true
+is_int_or_some_string(x::Union{String,Symbol}) = x isa String
+keep_cond(c::Bool, ::Union{Int,String}) = c
+named_twice(_, s::Symbol) = !isempty(string(s))
+named_twice(_, s::AbstractString) = !isempty(s)
 
 @testset "slot refinements from method signatures" begin
     # refinements that split a component of the argument type into the argument types of
@@ -2007,6 +2021,11 @@ end
             (x -> (int_float_or_string(x); takes_int(x)), (Number,)),
             (x -> (int_float_or_string(x); int_or_string(x)), (Union{Number,String},)),
             (b -> (ready(b.v); b.v.x), (AnyBox,)),
+            # so are the refinements in the branches on a `Bool` result, e.g. of `x::Any`
+            # into `Union{Symbol,AbstractString}`
+            (x -> named(x) && takes_symbol(x), (Any,)),
+            (x -> named(x) || takes_symbol(x), (Any,)),
+            (x -> named_twice(x, x) && takes_symbol(x), (Any,)),
         )
         @test isempty(get_reports(analyze_call(f, argtypes)))
     end
@@ -2020,6 +2039,23 @@ end
     let result = analyze_call(x -> (takes_int(x); x + 1), (Union{Nothing,Int},))
         r = only(get_reports(result))
         @test r isa NoMethodMatchReport && r.t == Any[Tuple{typeof(takes_int),Nothing}]
+    end
+    # as is a branch refinement excluding a component, e.g. `Nothing` for which `hasname`
+    # returns `false`
+    let result = analyze_call(x -> hasname(x) && takes_symbol(x), (Union{Nothing,Symbol,String},))
+        r = only(get_reports(result))
+        @test r isa NoMethodMatchReport && r.t == Any[Tuple{typeof(takes_symbol),String}]
+    end
+    # and branch refinements by a callee, e.g. `x isa Union{Int,String}` in a predicate, or
+    # propagated from a `Conditional` argument, e.g. of `!`
+    for (f, argtypes) in (
+            (x -> is_int_or_string(x) && takes_symbol(x), (Any,)),
+            (x -> is_int_or_string_overloaded(x) && takes_symbol(x), (Any,)),
+            (x -> is_int_or_some_string(x) && takes_symbol(x), (Any,)),
+            (b -> !(b.v isa Union{Int,String}) || takes_symbol(b.v), (AnyBox,)),
+            (x -> keep_cond(x isa Union{Int,String}, x) && takes_symbol(x), (Any,)),
+        )
+        @test only(get_reports(analyze_call(f, argtypes))) isa NoMethodMatchReport
     end
     # also when another component is split, e.g. `Union{Nothing,Number}` is refined to
     # `Number` rather than to `Union{Int,Float64}`
@@ -2071,6 +2107,15 @@ end
         end
         # the field is still known to be defined, although its type is widened back to `Any`
         @test isempty(get_reports(analyze_call(check_maybe_undef_box, (MaybeUndefBox,))))
+    end
+
+    # known limitations: branch refinements that also exclude a component for which a method
+    # returns `false`, or of a field, are not widened
+    for (f, argtypes) in (
+            (x -> hasname(x) && takes_symbol(x), (Any,)),
+            (b -> named(b.v) && takes_symbol(b.v), (AnyBox,)),
+        )
+        @test_broken isempty(get_reports(analyze_call(f, argtypes)))
     end
 end
 
