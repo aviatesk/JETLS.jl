@@ -9,7 +9,7 @@ Usage: ./scripts/selfcheck.sh [OPTIONS]
 Run JETLS self-diagnostics on the projects of this repository, or only on
 those given by -p: the packages along with their test suites, and the Julia
 files in docs and scripts. Other options are passed through to jetls check
-and override the defaults --root=<project root> and --show-severity=warn.
+and override the default --root=<project root>.
 
 Projects:
   ${PROJECTS[*]}
@@ -104,7 +104,6 @@ exec "$JULIA" --startup-file=no --project="$PROJECT_ROOT" --threads="$THREADS" \
     -m JETLS check \
     --root="$PROJECT_ROOT" \
     $QUIET \
-    --show-severity=warn \
     "${PACKAGE_PATHS[@]}" \
     "${FILE_PATHS[@]}" \
     "${EXTRA_ARGS[@]}"
