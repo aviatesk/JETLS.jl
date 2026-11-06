@@ -332,6 +332,22 @@ function declared_argtypes(@nospecialize sig)
     return argtypes
 end
 
+# The program counter of the last assignment to the slot `id` before the statement `idx` in
+# the basic block containing `idx`, or `nothing` if there is no such assignment.
+function find_dominating_assignment(id::Int, idx::Int, sv::CC.InferenceState)
+    block = CC.block_for_inst(sv.cfg, idx)
+    for pc in reverse(sv.cfg.blocks[block].stmts)
+        pc < idx || continue # `id` can be assigned at `idx` itself
+        stmt = sv.src.code[pc]
+        Meta.isexpr(stmt, :(=)) || continue
+        lhs = stmt.args[1]
+        lhs isa SlotNumber || continue
+        lhs.id == id || continue
+        return pc
+    end
+    return nothing
+end
+
 function should_analyze(analyzer::LSAnalyzer, sv::CC.InferenceState)
     report_target_modules = analyzer.report_target_modules
     return isnothing(report_target_modules) || CC.frame_module(sv) ∈ report_target_modules
@@ -1440,7 +1456,7 @@ function transparent_getproperty_slot_id!(
         slot.id ≤ 3 && return slot.id
         slot.id ∈ seen_slots && return nothing
         push!(seen_slots, slot.id)
-        pc_assign = @something CC.find_dominating_assignment(slot.id, pc, sv) return nothing
+        pc_assign = @something find_dominating_assignment(slot.id, pc, sv) return nothing
         stmt = sv.src.code[pc_assign]
         if Meta.isexpr(stmt, :(=)) && length(stmt.args) == 2
             lhs, rhs = stmt.args

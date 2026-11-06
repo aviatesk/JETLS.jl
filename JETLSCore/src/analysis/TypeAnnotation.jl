@@ -690,7 +690,7 @@ end
 #   (`bb_entry_vartable(frame, bb)[id]`), which CC's dataflow has already populated
 #   with cross-bb branch narrowing.
 function slot_type_at(slot::SlotNumber, idx::Int, frame::CC.InferenceState)
-    pc_assign = CC.find_dominating_assignment(slot.id, idx, frame)
+    pc_assign = Analyzer.find_dominating_assignment(slot.id, idx, frame)
     pc_assign === nothing || return frame.ssavaluetypes[pc_assign]
     bb = CC.block_for_inst(frame.cfg, idx)
     entry = @something bb_entry_vartable(frame, bb) return frame.src.slottypes[slot.id]
