@@ -156,6 +156,23 @@ Errors that depend on the types of the arguments without declared types, such
 as the one in `f("julia")`, are reported only through
 [call-site inference](@ref analysis/full/inference/call-site).
 
+This includes errors that occur only in a method for some types of such an
+argument. When a call has a few matching methods, inference follows each of
+them, including the methods that accept only some types of an argument whose
+type is unknown. If another matching method accepts the argument of any type,
+JETLS does not report the errors found only through such methods:
+
+```@diagnostics; codes = ["inference/field-error"]
+# not reported, although `findlast` calls the predicate with `Bool`s for a `BitArray`
+last_error(stack) = findlast(x -> x.exception isa ErrorException, stack)
+# reported, since a `BitVector` is an `AbstractVector`
+last_error_vec(stack::AbstractVector) =
+    findlast(x -> x.exception isa ErrorException, stack)
+```
+
+The same applies to a value whose type is inferred as `Any` for other reasons,
+e.g. an element of a `Vector{Any}`.
+
 #### [Call-site inference](@id analysis/full/inference/call-site)
 
 When inference reaches a call, it infers the called method with the argument

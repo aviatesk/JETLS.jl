@@ -629,6 +629,145 @@ function after_abstract_call_gf_by_type(
     return nothing
 end
 
+"""
+    filter_speculative_match_reports(analyzer::LSAnalyzer, ret::CC.Future{CC.CallMeta},
+        sv::CC.InferenceState, nreports::Int) -> CC.Future{CC.CallMeta}
+
+Discards the reports that a call has added to `sv` from the callees of its speculative
+matches (see [`is_speculative_match`](@ref)), when the call also has a match that fully
+covers the call signature. `nreports` is the number of the reports of `sv` before the call.
+
+A call with an argument inferred as `Any`, e.g. an argument without a declared type in
+signature analysis, also matches the methods specific to some types of the argument, and
+inference follows them as long as the number of the matches is within `max_methods`. For
+example, with `stack::Any`, `findlast(x -> x.exception isa ArgumentError, stack)` reaches
+`findprev(testf::Function, B::BitArray, start::Integer)`, which calls the predicate with
+`Bool`s. Errors found only through such matches are left to call-site inference with the
+actual argument types. Inference still follows these matches, so their return types are
+kept. Without a fully covering match, every call that does not throw a `MethodError` goes
+through one of the matches, so their reports are kept.
+
+The reports are identified by their callee `MethodInstance` at the statement of the call,
+which matches for different argument types may share, e.g. of a `@nospecializeinfer` method,
+also across the branches of a splatted union of tuple types, which are inferred as separate
+calls at the same statement. So only the reports added by the call itself are discarded,
+except for those through a `MethodInstance` that a non-speculative match of the call also
+uses. The returned `Future` includes the filtering, so that the caller, e.g. the inference
+of the next branch of a splatted call, waits for it.
+
+Whether a match is speculative depends only on the call in `sv`, so the reports are
+discarded in frames outside `report_target_modules` as well, whose reports are cached for
+any caller.
+"""
+function filter_speculative_match_reports(
+        analyzer::LSAnalyzer, ret::CC.Future{CC.CallMeta}, sv::CC.InferenceState,
+        nreports::Int
+    )
+    function _filter_speculative_match_reports(
+            call::CC.CallMeta, analyzer′::LSAnalyzer, sv′::CC.InferenceState
+        )
+        filter_speculative_match_reports!(analyzer′, sv′, call, nreports)
+        return call
+    end
+    return CC.Future{CC.CallMeta}(_filter_speculative_match_reports, ret, analyzer, sv)
+end
+
+function filter_speculative_match_reports!(
+        analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta, nreports::Int
+    )
+    reports = JET.get_reports(analyzer, sv.result)
+    length(reports) > nreports || return nothing
+    info = call.info
+    @static if isdefinedglobal(CC, :ConstCallInfo)
+        if isa(info, CC.ConstCallInfo)
+            info = info.call
+        end
+    end
+    if isa(info, CC.MethodMatchInfo)
+        splits = CC.MethodMatchInfo[info]
+    elseif isa(info, CC.UnionSplitInfo)
+        splits = info.split
+    else
+        return nothing
+    end
+    speculative = MethodInstance[]
+    kept = MethodInstance[]
+    for split in splits, i = 1:length(split.results)
+        mi = match_instance(split, i)
+        if split.fullmatch && is_speculative_match(split.atype, split.results[i])
+            push!(speculative, mi)
+        else
+            push!(kept, mi)
+        end
+    end
+    filter!(∉(kept), speculative)
+    isempty(speculative) && return nothing
+    # Reports are appended during the call, so those after the first `nreports` are its
+    # own. If JET drops earlier reports meanwhile, e.g. for constant propagation, some of
+    # them are left unfiltered.
+    parent_frame = JET.get_virtual_frame(sv)
+    j = nreports
+    for i = nreports+1:length(reports)
+        report = reports[i]
+        any(mi -> JET.islineage(parent_frame, mi)(report), speculative) && continue
+        reports[j += 1] = report
+    end
+    resize!(reports, j)
+    return nothing
+end
+
+# The `MethodInstance` of the callee frame inferred for the `i`-th match of `info`, whose
+# signature may differ from `match.spec_types`, e.g. when the recursion is limited.
+function match_instance(info::CC.MethodMatchInfo, i::Int)
+    edge = info.edges[i]
+    return edge === nothing ? CC.specialize_method(info.results[i]) : CC.get_ci_mi(edge)
+end
+
+"""
+    is_speculative_match(atype, match::Core.MethodMatch) -> Bool
+
+Returns whether `match` does not fully cover the call signature `atype` only because some
+arguments have the type `Any`, i.e. whether the method of `match` covers `atype` with only
+its `Any` arguments, including a `Vararg{Any}` tail, narrowed as `match` narrows them. The
+tail may be narrowed to any number of arguments, e.g. for `f(xs...)` with `xs::Tuple`,
+`f(x::Int, y::Int)` is a speculative match if `f` also has a method for any arguments.
+
+For example, with `x::Any`, `findlast(testf, A::Union{AbstractArray,AbstractString})` is a
+speculative match for `findlast(pred, x)`. With `A::AbstractArray` and `start::Any`,
+`findprev(testf::Function, B::BitArray, start::Integer)` is not a speculative match for
+`findprev(pred, A, start)`, since it also narrows `A`. Likewise, with `a::Integer`,
+`b::Integer` and `x::Any`, `f(a::T, b::T, ::Flag) where {T<:Integer}` is not a speculative
+match for `f(a, b, x)`, since it requires `a` and `b` to have the same type.
+"""
+function is_speculative_match(@nospecialize(atype), match::Core.MethodMatch)
+    match.fully_covers && return false
+    atype isa DataType || return false
+    spec = Base.unwrap_unionall(match.spec_types)
+    spec isa DataType || return false
+    argtypes, params = atype.parameters, spec.parameters
+    nargs, nparams = length(argtypes), length(params)
+    vatail = nargs > 0 && argtypes[nargs] === Vararg{Any}
+    nfixed = vatail ? nargs - 1 : nargs
+    (vatail ? nparams ≥ nfixed : nparams == nargs) || return false
+    narrowed = Vector{Any}(undef, nparams)
+    narrows_any = vatail
+    for i = 1:nfixed
+        argtype, param = argtypes[i], params[i]
+        param isa Core.TypeofVararg && i < nparams && return false
+        if argtype === Any
+            narrowed[i] = param
+            narrows_any = true
+        else
+            narrowed[i] = argtype
+        end
+    end
+    narrows_any || return false
+    for i = nfixed+1:nparams
+        narrowed[i] = params[i]
+    end
+    return Base.rewrap_unionall(Tuple{narrowed...}, match.spec_types) <: match.method.sig
+end
+
 @static if hasmethod(CC.abstract_call_gf_by_type,
         Tuple{CC.AbstractInterpreter, Any, CC.ArgInfo, CC.StmtInfo, Any,
               Union{Vector{CC.VarState}, Nothing}, CC.AbsIntState, Int})
@@ -637,11 +776,13 @@ function CC.abstract_call_gf_by_type(
         si::CC.StmtInfo, @nospecialize(atype), vtypes::Union{Vector{CC.VarState},Nothing},
         sv::CC.InferenceState, max_methods::Int
     )
+    nreports = length(JET.get_reports(analyzer, sv.result))
     ret = @invoke CC.abstract_call_gf_by_type(
         analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, vtypes::Union{Vector{CC.VarState},Nothing},
         sv::CC.InferenceState, max_methods::Int)
     after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, sv, max_methods)
+    ret = filter_speculative_match_reports(analyzer, ret, sv, nreports)
     return unsplit_slot_refinements(analyzer, ret, arginfo, vtypes, sv)
 end
 else
@@ -649,10 +790,12 @@ function CC.abstract_call_gf_by_type(
         analyzer::LSAnalyzer, @nospecialize(func), arginfo::CC.ArgInfo,
         si::CC.StmtInfo, @nospecialize(atype), sv::CC.InferenceState, max_methods::Int
     )
+    nreports = length(JET.get_reports(analyzer, sv.result))
     ret = @invoke CC.abstract_call_gf_by_type(
         analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
     after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, sv, max_methods)
+    ret = filter_speculative_match_reports(analyzer, ret, sv, nreports)
     return unsplit_slot_refinements(analyzer, ret, arginfo, #=vtypes=#nothing, sv)
 end
 end
