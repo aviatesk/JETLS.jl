@@ -680,6 +680,14 @@ refining `x::Any` to `Union{Missing,Integer}`.
 Other refinements are kept, e.g. `Union{Nothing,Int}` refined to `Int`, so that the error
 reported at the refining call is not reported again afterwards, or `Any` refined to `Int`
 by a function only defined for `Int`.
+
+The `Conditional` result of a call to a function returning `Bool` refines the slot passed as
+an argument in the branches on the result in the same way, e.g. `if isidentifier(x)` refines
+`x::Any` to `Union{AbstractString,Symbol}` in the `then` branch. Unlike slot refinements, it
+may also come from the callees, e.g. `x isa Union{Int,String}` in the body of a predicate,
+so its types are widened only when they are exactly the join of the argument types of the
+matched methods, i.e. when they come from the method signatures alone. It is kept when it
+may be propagated from a `Conditional` argument, e.g. of `!`.
 """
 function unsplit_slot_refinements(
         analyzer::LSAnalyzer, ret::CC.Future{CC.CallMeta}, arginfo::CC.ArgInfo,
@@ -689,17 +697,82 @@ function unsplit_slot_refinements(
     fargs === nothing && return ret
     return CC.Future{CC.CallMeta}(ret, analyzer, sv) do call::CC.CallMeta, _, _
         refinements = call.refinements
-        refinements isa Vector{Any} || return call
-        for i = 1:length(fargs)
-            fargᵢ = fargs[i]
-            fargᵢ isa CC.SlotNumber || continue
-            slot = CC.slot_id(fargᵢ)
-            refined = @something refinements[slot] continue
-            refinements[slot] = unsplit_refinement(refined, CC.widenslotwrapper(argtypes[i]))
+        if refinements isa Vector{Any}
+            for i = 1:length(fargs)
+                fargᵢ = fargs[i]
+                fargᵢ isa CC.SlotNumber || continue
+                slot = CC.slot_id(fargᵢ)
+                refined = @something refinements[slot] continue
+                refinements[slot] = unsplit_refinement(refined, CC.widenslotwrapper(argtypes[i]))
+            end
+            vtypes === nothing || unsplit_field_refinements!(refinements, vtypes)
         end
-        vtypes === nothing || unsplit_field_refinements!(refinements, vtypes)
-        return call
+        rt = call.rt
+        rt isa CC.Conditional || return call
+        unsplit = unsplit_conditional(rt, call.info, fargs, argtypes, sv)
+        unsplit === rt && return call
+        return CC.CallMeta(unsplit, call.exct, call.effects, call.info, call.refinements)
     end
+end
+
+function unsplit_conditional(
+        cnd::CC.Conditional, @nospecialize(info::CC.CallInfo), fargs::Vector{Any},
+        argtypes::Vector{Any}, sv::CC.InferenceState
+    )
+    original = matched = nothing
+    for i = 1:length(fargs)
+        argtype = argtypes[i]
+        # propagated from a `Conditional` argument, e.g. of `!`
+        argtype isa CC.Conditional && argtype.slot == cnd.slot && return cnd
+        arg = CC.ssa_def_slot(fargs[i], sv)
+        arg isa CC.SlotNumber && CC.slot_id(arg) == cnd.slot || continue
+        matchedᵢ = @something matched_argtype(info, i) return cnd
+        # `from_interconditional` intersects the refinements of all the arguments of the slot
+        matched = matched === nothing ? matchedᵢ : typeintersect(matched, matchedᵢ)
+        original = @something original CC.widenslotwrapper(argtype)
+    end
+    (original === nothing || matched === nothing) && return cnd
+    thentype = unsplit_matched_refinement(cnd.thentype, original, matched)
+    elsetype = unsplit_matched_refinement(cnd.elsetype, original, matched)
+    thentype === cnd.thentype && elsetype === cnd.elsetype && return cnd
+    return with_conditional_types(cnd, thentype, elsetype)
+end
+
+# The join of the `i`-th argument types of the matched methods of a call, or `nothing` if
+# they are unknown.
+function matched_argtype(@nospecialize(info::CC.CallInfo), i::Int)
+    @static if isdefinedglobal(CC, :ConstCallInfo)
+        if isa(info, CC.ConstCallInfo)
+            info = info.call
+        end
+    end
+    if isa(info, CC.MethodMatchInfo)
+        splits = CC.MethodMatchInfo[info]
+    elseif isa(info, CC.UnionSplitInfo)
+        splits = info.split
+    else
+        return nothing
+    end
+    matched = Union{}
+    for split in splits, match in split.results
+        matched = Union{matched, fieldtype(match.spec_types, i)}
+    end
+    return matched
+end
+
+function unsplit_matched_refinement(
+        @nospecialize(refined), @nospecialize(original), @nospecialize(matched)
+    )
+    CC.widenconst(refined) == matched || return refined
+    return @something unsplit_refinement(refined, original) original
+end
+
+@static if hasfield(CC.Conditional, :ssadef)
+with_conditional_types(cnd::CC.Conditional, @nospecialize(thentype), @nospecialize(elsetype)) =
+    CC.Conditional(cnd.slot, cnd.ssadef, thentype, elsetype; cnd.isdefined)
+else
+with_conditional_types(cnd::CC.Conditional, @nospecialize(thentype), @nospecialize(elsetype)) =
+    CC.Conditional(cnd.slot, thentype, elsetype; cnd.isdefined)
 end
 
 # Widens the union components of `refined` that fall into the same union component of
