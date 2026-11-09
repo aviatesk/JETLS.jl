@@ -629,7 +629,7 @@ end
 surface_global_binfo(name::String, node::SyntaxTree, mod::Module) =
     JL.BindingInfo(JL.IdTag(0), name, :global, node, mod, nothing, 0,
         false, false, false, false, false, false, false, false, false, false,
-        false, false, false, false)
+        false, false, false)
 
 function collect_export_public_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},

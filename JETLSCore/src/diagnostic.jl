@@ -824,7 +824,7 @@ end
 # ===================
 
 const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext, SyntaxTree))).file
-const JL_INVOKE_IN_WORLD_FILE = only(methods(JL._invoke_in_world)).file
+const JL_SCRIPT_ENTRY_MACRO_FILE = only(methods(JL.__script_entry_macro)).file
 
 # Like `stacktrace(bt)`, but only the frames of the macro expansion that threw (all frames
 # if there is none). Frames are looked up lazily since symbolizing a whole backtrace takes
@@ -832,8 +832,8 @@ const JL_INVOKE_IN_WORLD_FILE = only(methods(JL._invoke_in_world)).file
 function macro_expansion_stacktrace(bt::Vector{<:Union{Base.InterpreterIP,Ptr{Cvoid}}})
     stack = Base.StackTraces.StackFrame[]
     for ip in bt, frame in Base.StackTraces.lookup(ip)
-        # the macro, which `JL.expand_macro` calls through `JL._invoke_in_world`, threw
-        frame.func === :_invoke_in_world && frame.file === JL_INVOKE_IN_WORLD_FILE && return stack
+        # the macro, which `JL.expand_macro` calls through `JL.__script_entry_macro`, threw
+        frame.func === :__script_entry_macro && frame.file === JL_SCRIPT_ENTRY_MACRO_FILE && return stack
         # `JL.expand_macro` itself threw, e.g. for a macro name that is not found
         frame.func === :expand_macro && frame.file === JL_MACRO_FILE && return stack
         frame.from_c || push!(stack, with_codeinst_linfo(frame))
