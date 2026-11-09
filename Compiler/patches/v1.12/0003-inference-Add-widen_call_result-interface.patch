@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shuhei Kadowaki <aviatesk@gmail.com>
+Date: Tue, 26 May 2026 16:46:09 +0900
+Subject: [PATCH] inference: Add `widen_call_result` interface
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extract the widening-to-`Any` decision applied to call return types at
+unused call sites into a new
+```julia
+widen_call_result(interp::AbstractInterpreter, si::StmtInfo, state::CallInferenceState, sv::AbsIntState)
+```
+interface, mirroring the style of `bail_out_call` and friends.
+
+The default implementation preserves existing behavior:
+```julia
+call_result_unused(si) && !(state.rettype === Bottom)
+```
+
+This is motivated by use cases such as LSP servers (esp. JETLS), where
+the widened `Any` shown at unused call sites is misleading to users —
+for those interpreters, holding the precise inferred return type is more
+useful. Such consumers can now opt out of (or generalize) the widening
+by overloading this method without forking the call inference pipeline.
+---
+ Compiler/src/abstractinterpretation.jl | 18 ++++++++++--------
+ Compiler/src/types.jl                  | 13 +++++++++++++
+ 2 files changed, 23 insertions(+), 8 deletions(-)
+
+diff --git a/Compiler/src/abstractinterpretation.jl b/Compiler/src/abstractinterpretation.jl
+index f7d6733b49..1ffd064ef3 100644
+--- a/Compiler/src/abstractinterpretation.jl
++++ b/Compiler/src/abstractinterpretation.jl
+@@ -107,6 +107,9 @@ mutable struct CallInferenceState
+     end
+ end
+ 
++widen_call_result(::AbstractInterpreter, si::StmtInfo, state::CallInferenceState, ::AbsIntState) =
++    call_result_unused(si) && !(state.rettype === Bottom)
++
+ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(func),
+                                   arginfo::ArgInfo, si::StmtInfo, @nospecialize(atype),
+                                   sv::AbsIntState, max_methods::Int)
+@@ -275,14 +278,13 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
+                 state.slotrefinements = collect_slot_refinements(𝕃ᵢ, applicable, argtypes, fargs, sv)
+             end
+             state.rettype = from_interprocedural!(interp, state.rettype, sv, arginfo, state.conditionals)
+-            if call_result_unused(si) && !(state.rettype === Bottom)
+-                add_remark!(interp, sv, "Call result type was widened because the return value is unused")
+-                # We're mainly only here because the optimizer might want this code,
+-                # but we ourselves locally don't typically care about it locally
+-                # (beyond checking if it always throws).
+-                # So avoid adding an edge, since we don't want to bother attempting
+-                # to improve our result even if it does change (to always throw),
+-                # and avoid keeping track of a more complex result type.
++            if widen_call_result(interp, si, state, sv)
++                add_remark!(interp, sv, "Call result type was widened")
++                # Encode the decision as a local `Any` in `state.rettype`, which flows into
++                # `ssavaluetypes[pc]` of the enclosing frame. Downstream `=== Any` gates
++                # (most notably the cycle backedge revisit filter in `update_cycle_worklists!`)
++                # then treat this call site as needing no further refinement. By default
++                # `Bottom` is excluded so that "always throws" remains observable.
+                 state.rettype = Any
+             end
+             # if from_interprocedural added any pclimitations to the set inherited from the arguments,
+diff --git a/Compiler/src/types.jl b/Compiler/src/types.jl
+index a04c9e7017..5a6e13ca84 100644
+--- a/Compiler/src/types.jl
++++ b/Compiler/src/types.jl
+@@ -477,6 +477,19 @@ but `AbstractInterpreter` doesn't provide a specific interface for configuring i
+ """
+ function bail_out_toplevel_call end, function bail_out_call end, function bail_out_apply end
+ 
++"""
++    widen_call_result(interp::AbstractInterpreter, si::StmtInfo, state::CallInferenceState,
++                      sv::AbsIntState) -> Bool
++
++Decide whether to widen `state.rettype` of the currently-inferred call to `Any` before
++returning the result to the enclosing frame. By default this returns
++`call_result_unused(si) && !(state.rettype === Bottom)`: when the call has no SSA consumer,
++precise return type information is locally useless, so widening lets downstream `=== Any`
++short-circuits (e.g. the cycle backedge revisit filter in `update_cycle_worklists!`) elide
++redundant work; `Bottom` is preserved so that always-throw behavior remains observable.
++"""
++function widen_call_result end
++
+ """
+     infer_compilation_signature(::AbstractInterpreter)::Bool
+ 
