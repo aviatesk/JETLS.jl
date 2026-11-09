@@ -3,8 +3,8 @@ uuid = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
 version = "0.1.0"
 BaseSyntax = "avi/base-syntax-2026-11-02"
 JET = "avi/JET-JETLS-head-2026-11-05"
-JuliaLowering = "avi/base-syntax-2026-11-02"
-JuliaSyntax = "avi/base-syntax-2026-11-02"
+JuliaLowering = "avi/base-syntax-2026-11-09"
+JuliaSyntax = "avi/base-syntax-2026-11-09"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
@@ -32,11 +32,11 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
 [sources]
-BaseSyntax = {rev = "6c86750f62", subdir = "BaseSyntax", url = "https://github.com/JuliaLang/julia"}
+BaseSyntax = {rev = "4d482a2e3c", subdir = "BaseSyntax", url = "https://github.com/JuliaLang/julia"}
 Compiler = {path = "../Compiler"}
 JET = {rev = "df83472acc", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "6c86750f62", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "6c86750f62", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaLowering = {rev = "4d482a2e3c", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "4d482a2e3c", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "../LSP"}
 TOMLSource = {path = "../TOMLSource"}
 TestRunner = {path = "../TestRunner"}

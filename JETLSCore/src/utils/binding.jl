@@ -160,7 +160,7 @@ function _jl_lower_for_scope_resolution(
         soft_scope::Bool = false,
     )
     ctx2, st2 = JL.expand_forms_2(st1, world)
-    ctx3, st3 = JL.resolve_scopes(ctx2, st2; soft_scope)
+    ctx3, st3 = JL.resolve_scopes(ctx2, st2, false, soft_scope)
     convert_closures || return (; st0, st1, st2, st3, ctx3)
     ctx4, st4 = JL.convert_closures(ctx3, st3)
     return (; st0, st1, st2, st3, st4, ctx3, ctx4)
@@ -438,7 +438,7 @@ function generated_method_ids(
     )
     ids = Set{JL.IdTag}()
     generator_names = Set{String}()
-    generator_index = Base.fieldindex(JL.GeneratedFunctionStub, :gen) + 1
+    generator_index = Base.fieldindex(BS.SyntaxGeneratedFunctionStub, :gen) + 1
     traverse(st3) do st3′::SyntaxTree
         JS.head(st3′) in (:inert, :syntaxinert) && return traversal_no_recurse
         JS.head(st3′) === :meta || return nothing
@@ -449,7 +449,7 @@ function generated_method_ids(
         JS.numchildren(stub) >= generator_index || return nothing
         stub_type = stub[1]
         JS.head(stub_type) === :value || return nothing
-        stub_type.value === JL.GeneratedFunctionStub || return nothing
+        stub_type.value === BS.SyntaxGeneratedFunctionStub || return nothing
         generator = stub[generator_index]
         JS.head(generator) === :identifier || return nothing
         push!(generator_names, name_val(generator))
