@@ -400,11 +400,14 @@ otherwise the docs build fails.
 ## Updating Compiler.jl snapshots
 
 JET and JETLS use the local [`Compiler`](./Compiler/) package. Its
-Julia-version-specific sources are generated from the exact Julia commits
-recorded in [`Compiler/snapshots.toml`](./Compiler/snapshots.toml) and
+Julia-version-specific sources are generated from the upstream Julia commits
+recorded in [`Compiler/snapshots.toml`](./Compiler/snapshots.toml) with the
+JETLS patches in [`Compiler/patches/`](./Compiler/patches/) applied, and
 committed as regular files.
 
-To update or add a snapshot, edit `Compiler/snapshots.toml` and run:
+To update or add a snapshot, edit `Compiler/snapshots.toml` and the patches as
+described in [`Compiler/README.md`](./Compiler/README.md#updating-snapshots),
+and run:
 
 ```bash
 julia --startup-file=no Compiler/update-snapshots.jl
@@ -417,7 +420,7 @@ Julia versions outside all configured ranges fall back to `Base.Compiler`
 ([`Compiler/src/fallback.jl`](./Compiler/src/fallback.jl)). JETLS does not
 support them, but TestRunner.jl can still run tests with them.
 
-Verify that committed sources match the configured commits with:
+Verify that committed sources match the configured commits and patches with:
 
 ```bash
 julia --startup-file=no Compiler/update-snapshots.jl --check

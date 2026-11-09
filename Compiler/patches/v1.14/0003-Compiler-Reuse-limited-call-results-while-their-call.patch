@@ -1,0 +1,303 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shuhei Kadowaki <aviatesk@gmail.com>
+Date: Sat, 24 Oct 2026 10:24:46 +0900
+Subject: [PATCH] Compiler: Reuse limited call results while their caller is in
+ progress
+
+When the recursion heuristic limits the inference of a call, its result
+is tombstoned and is not cached, since its accuracy depends on the
+inference context. So every call to the same method instance infers it
+again, together with all of its limited callees. A frame that makes the
+call from several sites, or revisits it while iterating over a cycle,
+repeats this work for each call, and the work multiplies with each
+nested level of limited calls.
+
+This commit makes the caller keep the limited result, together with the
+proof of its dependencies, while the caller is in progress. A later call
+to the same method instance, made by the caller or by a frame inferred
+on its behalf, reuses that result instead of inferring it again. The
+inference context below the caller does not change while the caller is
+in progress, so inferring the call again would mostly hit the same
+limitation. The new caller retains the proof, as the caller of a newly
+inferred limited result does. The result is returned through a new
+`return_cached_result` method, so that an `AbstractInterpreter` can
+restore its own analysis results for it.
+
+The table below is from release builds of Julia with #63634 reverted
+to recreate the large recursive cycles, without and with the change
+that avoids copying SCC proofs into every consumer ("SCC"). The harness
+infers the compiler's own `typeinf` with an `AbstractInterpreter` that
+uses aggressive constant propagation; the table shows its time (median
+of three runs) and the numbers of frames it infers and of those that
+are tombstoned. JET's self check runs the first analysis of its
+`test/self_check.jl`.
+
+|              | harness | frames | tombstoned | JET's self check |
+|--------------|--------:|-------:|-----------:|-----------------:|
+| before       |  48.5 s | 51,918 |     13,625 |            744 s |
+| after        |  38.8 s | 47,418 |      8,243 |            209 s |
+| before (SCC) |  23.3 s | 51,918 |     13,625 |            122 s |
+| after (SCC)  |  21.2 s | 47,418 |      8,243 |             43 s |
+
+The published results of the harness stay the same, except that 49 of
+about 22,200 method instances are no longer published.
+
+Assisted-by: Claude Code (Opus 5.5)
+---
+ Compiler/src/inferencestate.jl |  6 ++-
+ Compiler/src/typeinfer.jl      | 91 ++++++++++++++++++++++++++++++++++
+ Compiler/src/types.jl          | 18 +++++++
+ Compiler/test/inference.jl     | 64 ++++++++++++++++++++++++
+ 4 files changed, 178 insertions(+), 1 deletion(-)
+
+diff --git a/Compiler/src/inferencestate.jl b/Compiler/src/inferencestate.jl
+index 00b8d41a22..948d5cd028 100644
+--- a/Compiler/src/inferencestate.jl
++++ b/Compiler/src/inferencestate.jl
+@@ -320,6 +320,8 @@ mutable struct InferenceState{I<:AbstractInterpreter}
+     pclimitations::IdSet{InferenceState} # causes of precision restrictions (LimitedAccuracy) on currpc ssavalue
+     limitations::IdSet{InferenceState} # causes of precision restrictions (LimitedAccuracy) on return
+     cycle_backedges::Vector{Tuple{InferenceState{I}, Int}} # call-graph backedges connecting from callee to caller
++    # limited results of callees, reusable for calls made while this frame is in progress
++    limited_results::Union{Nothing,IdDict{MethodInstance,LimitedInferenceResult}}
+ 
+     # IPO tracking of in-process work, shared with all frames given AbstractInterpreter
+     callstack::Vector{Union{InferenceState{I},IRInterpretationState{I}}}
+@@ -403,6 +405,7 @@ mutable struct InferenceState{I<:AbstractInterpreter}
+         pclimitations = IdSet{InferenceState}()
+         limitations = IdSet{InferenceState}()
+         cycle_backedges = Tuple{InferenceState{I},Int}[]
++        limited_results = nothing
+         callstack = Union{InferenceState{I},IRInterpretationState{I}}[]
+         tasks = WorkThunk[]
+ 
+@@ -430,7 +433,8 @@ mutable struct InferenceState{I<:AbstractInterpreter}
+         this = new(
+             mi, valid_worlds, mod, sptypes, slottypes, src, cfg, spec_info,
+             currbb, currpc, ip, handler_info, ssavalue_uses, bb_states, bb_saw_latestworld, ssavaluetypes, ssaflags, edges, stmt_info,
+-            tasks, pclimitations, limitations, cycle_backedges, callstack, parentid, frameid, cycleid,
++            tasks, pclimitations, limitations, cycle_backedges, limited_results, callstack,
++            parentid, frameid, cycleid,
+             result, unreachable, bestguess, exc_bestguess, ipo_effects,
+             _time_ns(), 0.0, 0, 0,
+             restrict_abstract_call_sites, cache_mode, insert_coverage,
+diff --git a/Compiler/src/typeinfer.jl b/Compiler/src/typeinfer.jl
+index 1374f203a4..faf496d8d0 100644
+--- a/Compiler/src/typeinfer.jl
++++ b/Compiler/src/typeinfer.jl
+@@ -1258,6 +1258,91 @@ function return_cached_result(interp::AbstractInterpreter, method::Method,
+         codeinst, edgecycle, edgelimited, edgerecursed, local_result))
+ end
+ 
++function return_cached_result(interp::AbstractInterpreter, method::Method,
++                              limited::LimitedInferenceResult,
++                              codeinst::Union{Nothing,CodeInstance},
++                              caller::AbsIntState, edgecycle::Bool, edgelimited::Bool,
++                              edgerecursed::Bool)
++    inf_result = limited.result
++    world = get_inference_world(interp)
++    update_valid_age!(caller, world, inf_result.valid_worlds)
++    # Like a newly inferred limited result, this provides neither a CI target nor a
++    # reusable local result, so retain the dependencies of its facts explicitly.
++    add_inference_proof!(caller.edges, limited.proof)
++    update_valid_age!(caller, world, proof_worlds(limited.proof))
++    if codeinst !== nothing
++        update_valid_age!(caller, world, proof_worlds(codeinst))
++    end
++    effects = inf_result.ipo_effects
++    exct = refine_exception_type(inf_result.exc_result, effects)
++    return Future(MethodCallResult(interp, caller, method, inf_result.result, exct, effects,
++        codeinst, edgecycle, edgelimited, edgerecursed;
++        force_edgecycle=false, needs_mi_edge=codeinst === nothing))
++end
++
++function record_limited_result!(caller::InferenceState, result::InferenceResult,
++                                proof::LocalInferenceProof)
++    limited_results = caller.limited_results
++    if limited_results === nothing
++        caller.limited_results = limited_results =
++            IdDict{MethodInstance,LimitedInferenceResult}()
++    end
++    limited_results[result.linfo] = LimitedInferenceResult(result, proof)
++    return nothing
++end
++
++function is_on_callstack(sv::AbsIntState, callstack::Vector)
++    frameid = sv.frameid
++    return 1 <= frameid <= length(callstack) && callstack[frameid] === sv
++end
++
++"""
++    lookup_limited_result(interp::AbstractInterpreter, mi::MethodInstance,
++                          caller::AbsIntState) -> Union{Nothing,LimitedInferenceResult}
++
++Find a limited result of `mi` kept by a frame that is still in progress on the callstack of
++`caller`, i.e. `caller` itself or a frame whose inference leads to `caller`.
++
++A limited result is not cached since its accuracy depends on the inference context, but the
++part of that context below the frame that made the call does not change while the frame is
++in progress. So inferring `mi` again for a call made by that frame (e.g. at another call
++site or in a later iteration over a cycle) or by a frame under it would mostly hit the same
++limitation, repeating the inference of the whole limited subtree for every such call.
++"""
++function lookup_limited_result(interp::AbstractInterpreter, mi::MethodInstance,
++                               caller::AbsIntState)
++    callstack = caller.callstack
++    for frameid = length(callstack):-1:1
++        limited = get_limited_result(interp, callstack[frameid], mi, callstack)
++        limited === nothing || return limited
++    end
++    # an uncached frame that returns to the user is not on the callstack
++    is_on_callstack(caller, callstack) && return nothing
++    return get_limited_result(interp, caller, mi, callstack)
++end
++
++function get_limited_result(interp::AbstractInterpreter, frame::AbsIntState,
++                            mi::MethodInstance, callstack::Vector)
++    frame isa InferenceState || return nothing
++    limited_results = frame.limited_results
++    limited_results === nothing && return nothing
++    limited = get(limited_results, mi, nothing)
++    limited === nothing && return nothing
++    get_inference_world(interp) in proof_worlds(limited.proof) || return nothing
++    cache_owner(frame.interp) === cache_owner(interp) || return nothing
++    # The caller collects the limitation causes of the result, and only frames that finish
++    # after the caller can resolve them.
++    result = limited.result
++    for typ in (result.result, result.exc_result)
++        if typ isa LimitedAccuracy
++            for cause in typ.causes
++                is_on_callstack(cause, callstack) || return nothing
++            end
++        end
++    end
++    return limited
++end
++
+ function lookup_cached_edge(interp::AbstractInterpreter, method::Method,
+                             mi::MethodInstance, caller::AbsIntState, force_inline::Bool,
+                             edgecycle::Bool, edgelimited::Bool, edgerecursed::Bool)
+@@ -1364,6 +1449,7 @@ function _schedule_edge_infer_task!(caller::AbsIntState, frame::InferenceState,
+                     Core.svec(internal_result_edges(frame)...))
+                 add_inference_proof!(caller.edges, proof)
+                 update_valid_age!(caller, get_inference_world(interp), proof_worlds(proof))
++                caller isa InferenceState && record_limited_result!(caller, result, proof)
+             end
+             effects = result.ipo_effects # effects are adjusted already within `finish` for ipo_effects
+             if !iszero(frame.cache_mode & CACHE_MODE_GLOBAL) && isdefined(result, :ci)
+@@ -1438,6 +1524,11 @@ function typeinf_edge(interp::AbstractInterpreter, method::Method, @nospecialize
+         frame = resolve_call_cycle!(interp, mi, caller)
+     end
+     if frame === false
++        limited = lookup_limited_result(interp, mi, caller)
++        if limited !== nothing
++            return return_cached_result(interp, method, limited, edge_ci, caller,
++                edgecycle, edgelimited, edgerecursed)
++        end
+         # completely new, but check again after reserving in the engine
+         if cache_mode == CACHE_MODE_GLOBAL
+             reserve_start = _time_ns() # subtract engine_reserve (thread-synchronization) time from callers to avoid double-counting
+diff --git a/Compiler/src/types.jl b/Compiler/src/types.jl
+index b733688691..3760dde2dd 100644
+--- a/Compiler/src/types.jl
++++ b/Compiler/src/types.jl
+@@ -211,6 +211,24 @@ end
+ 
+ inference_proof(result::LocalInferenceResult) = result.proof
+ 
++"""
++    LimitedInferenceResult
++
++A completed [`InferenceResult`](@ref) of a call whose accuracy was limited by the recursion
++heuristic, i.e. a tombstoned one, together with the `proof` of its dependencies. Its facts
++depend on the inference context of the call, so it is never cached. Instead, the calling
++frame keeps it while that frame is being inferred, and calls made in that context reuse it
++instead of inferring it again.
++"""
++struct LimitedInferenceResult
++    result::InferenceResult
++    proof::LocalInferenceProof
++    function LimitedInferenceResult(result::InferenceResult, proof::LocalInferenceProof)
++        @assert result.tombstone "a limited result must be tombstoned"
++        return new(result, proof)
++    end
++end
++
+ const InferenceCacheEntry = Union{InferenceResult,LocalInferenceResult}
+ function InferenceResult(mi::MethodInstance, 𝕃::AbstractLattice=fallback_lattice)
+     argtypes = matching_cache_argtypes(𝕃, mi)
+diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
+index 43412ab952..2a3e525cec 100644
+--- a/Compiler/test/inference.jl
++++ b/Compiler/test/inference.jl
+@@ -6724,6 +6724,70 @@ Base.@constprop :aggressive type_level_recurse2(x...) = type_level_recurse1(x...
+ type_level_recurse_entry() = Val{type_level_recurse1(1)}()
+ @test Base.infer_return_type(type_level_recurse_entry, (); interp=RecurseInterpreter()) == Val{1}
+ 
++# A frame reuses the limited results of its callees while it is in progress, rather than
++# inferring a limited callee (and its whole limited subtree) again for each call.
++module LimitedResultReuse
++    c(x, b::Bool) = b ? x : (t((x,), b), t((x,), b))
++    t(x, b::Bool) = c(x, b)
++end
++@newinterp LimitedResultReuseInterp
++function Compiler.finish!(interp::LimitedResultReuseInterp, caller::Compiler.InferenceState,
++                          validation_world::UInt, time_before::UInt64)
++    caller.result.tombstone && push!(interp.meta, caller.linfo)
++    return @invoke Compiler.finish!(interp::Compiler.AbstractInterpreter,
++        caller::Compiler.InferenceState, validation_world::UInt, time_before::UInt64)
++end
++let limited = Core.MethodInstance[]
++    interp = LimitedResultReuseInterp(limited)
++    @test Int <: Base.infer_return_type(LimitedResultReuse.c, (Int, Bool); interp)
++    @test !isempty(limited)
++    @test allunique(limited)
++end
++
++# A reused limited result is available only while the frame that inferred it is in
++# progress, and its new caller retains the dependency proof of the result.
++module LimitedResultReuseProof
++    const FLAG = true
++    callee() = FLAG ? 1 : 2
++    caller() = callee()
++    entry() = caller()
++end
++let
++    interp = Compiler.NativeInterpreter(Base.get_world_counter())
++    function newframe(f)
++        mi = Base.method_instance(f, ())
++        result = Compiler.InferenceResult(mi, Compiler.typeinf_lattice(interp))
++        return Compiler.InferenceState(result, Compiler.CACHE_MODE_GLOBAL, interp)
++    end
++    outer = newframe(LimitedResultReuseProof.entry)
++    inner = newframe(LimitedResultReuseProof.caller)
++    Compiler.assign_parentchild!(inner, outer)
++
++    callee_mi = Base.method_instance(LimitedResultReuseProof.callee, ())
++    result = Compiler.InferenceResult(callee_mi, Compiler.typeinf_lattice(interp))
++    causes = Compiler.IdSet{Compiler.InferenceState}()
++    push!(causes, outer)
++    result.result = Compiler.LimitedAccuracy(Int, causes)
++    result.exc_result = Union{}
++    result.ipo_effects = Compiler.EFFECTS_TOTAL
++    result.valid_worlds = outer.valid_worlds
++    result.tombstone = true
++    binding = convert(Core.Binding, GlobalRef(LimitedResultReuseProof, :FLAG))
++    proof = Compiler.LocalInferenceProof(result.valid_worlds, Core.svec(binding))
++    Compiler.record_limited_result!(outer, result, proof)
++
++    limited = Compiler.lookup_limited_result(interp, callee_mi, inner)
++    @test limited isa Compiler.LimitedInferenceResult && limited.result === result
++    mresult = Compiler.return_cached_result(interp, callee_mi.def, limited, nothing, inner,
++        false, false, false)
++    @test mresult[].rt === result.result
++    @test mresult[].needs_mi_edge
++    @test any(edge -> edge === proof, inner.edges)
++
++    empty!(outer.callstack)
++    @test Compiler.lookup_limited_result(interp, callee_mi, inner) === nothing
++end
++
+ # Test that inference doesn't give up if it can potentially refine effects,
+ # even if the return type is Any.
+ f_no_bail_effects_any(x::Any) = x

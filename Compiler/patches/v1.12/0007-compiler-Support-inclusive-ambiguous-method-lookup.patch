@@ -1,0 +1,157 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shuhei Kadowaki <aviatesk@gmail.com>
+Date: Tue, 1 Sep 2026 16:03:56 +0900
+Subject: [PATCH] compiler: Support inclusive ambiguous method lookup
+
+`MethodTableView` lookups always filtered fully ambiguous matches.
+This forced language servers and other tooling that need ambiguity
+candidates to bypass the compiler method-table abstraction.
+
+Thread an `include_ambiguous` option through internal, overlay, and
+cached lookups. Include the option in `MethodMatchKey` so cached
+inclusive and filtered queries cannot collide.
+
+Assisted-by: Zed (GPT-5.6-Sol)
+---
+ Compiler/src/methodtable.jl          | 43 ++++++++++++++++------------
+ Compiler/test/AbstractInterpreter.jl | 35 ++++++++++++++++++++++
+ 2 files changed, 60 insertions(+), 18 deletions(-)
+
+diff --git a/Compiler/src/methodtable.jl b/Compiler/src/methodtable.jl
+index 09d29d5c72..21c46f179d 100644
+--- a/Compiler/src/methodtable.jl
++++ b/Compiler/src/methodtable.jl
+@@ -42,7 +42,9 @@ end
+ struct MethodMatchKey
+     sig # ::Type
+     limit::Int
+-    MethodMatchKey(@nospecialize(sig), limit::Int) = new(sig, limit)
++    include_ambiguous::Bool
++    MethodMatchKey(@nospecialize(sig), limit::Int, include_ambiguous::Bool) =
++        new(sig, limit, include_ambiguous)
+ end
+ 
+ """
+@@ -58,20 +60,23 @@ end
+ CachedMethodTable(table::T) where T = CachedMethodTable{T}(IdDict{MethodMatchKey, Union{Nothing,MethodLookupResult}}(), table)
+ 
+ """
+-    findall(sig::Type, view::MethodTableView; limit::Int=-1) ->
++    findall(sig::Type, view::MethodTableView;
++            limit::Int=-1, include_ambiguous::Bool=false) ->
+         matches::MethodLookupResult or nothing
+ 
+-Find all methods in the given method table `view` that are applicable to the given signature `sig`.
+-If no applicable methods are found, an empty result is returned.
+-If the number of applicable methods exceeded the specified `limit`, `nothing` is returned.
+-Note that the default setting `limit=-1` does not limit the number of applicable methods.
+-`overlayed` indicates if any of the matching methods comes from an overlayed method table.
++Find all methods in `view` that are applicable to `sig`. If no applicable methods
++are found, an empty result is returned. If the number of applicable methods exceeds
++`limit`, `nothing` is returned. The default `limit=-1` does not limit the number of
++applicable methods. `include_ambiguous=true` retains fully ambiguous matches that are
++normally filtered out of the result.
+ """
+-findall(@nospecialize(sig::Type), table::InternalMethodTable; limit::Int=-1) =
+-    _findall(sig, nothing, table.world, limit)
++findall(@nospecialize(sig::Type), table::InternalMethodTable;
++        limit::Int=-1, include_ambiguous::Bool=false) =
++    _findall(sig, nothing, table.world, limit, include_ambiguous)
+ 
+-function findall(@nospecialize(sig::Type), table::OverlayMethodTable; limit::Int=-1)
+-    result = _findall(sig, table.mt, table.world, limit)
++function findall(@nospecialize(sig::Type), table::OverlayMethodTable;
++                 limit::Int=-1, include_ambiguous::Bool=false)
++    result = _findall(sig, table.mt, table.world, limit, include_ambiguous)
+     result === nothing && return nothing
+     nr = length(result)
+     if nr ≥ 1 && result[nr].fully_covers
+@@ -79,7 +84,7 @@ function findall(@nospecialize(sig::Type), table::OverlayMethodTable; limit::Int
+         return result
+     end
+     # fall back to the internal method table
+-    fallback_result = _findall(sig, nothing, table.world, limit)
++    fallback_result = _findall(sig, nothing, table.world, limit, include_ambiguous)
+     fallback_result === nothing && return nothing
+     # merge the fallback match results with the internal method table,
+     # filtering out base methods that are fully covered by overlay methods
+@@ -98,25 +103,27 @@ function findall(@nospecialize(sig::Type), table::OverlayMethodTable; limit::Int
+         result.ambig | fallback_result.ambig)
+ end
+ 
+-function _findall(@nospecialize(sig::Type), mt::Union{Nothing,MethodTable}, world::UInt, limit::Int)
++function _findall(@nospecialize(sig::Type), mt::Union{Nothing,MethodTable}, world::UInt,
++                  limit::Int, include_ambiguous::Bool)
+     _min_val = RefValue{UInt}(typemin(UInt))
+     _max_val = RefValue{UInt}(typemax(UInt))
+     _ambig = RefValue{Int32}(0)
+-    ms = _methods_by_ftype(sig, mt, limit, world, false, _min_val, _max_val, _ambig)
++    ms = _methods_by_ftype(sig, mt, limit, world, include_ambiguous, _min_val, _max_val, _ambig)
+     isa(ms, Vector) || return nothing
+     return MethodLookupResult(ms, WorldRange(_min_val[], _max_val[]), _ambig[] != 0)
+ end
+ 
+-function findall(@nospecialize(sig::Type), table::CachedMethodTable; limit::Int=-1)
++function findall(@nospecialize(sig::Type), table::CachedMethodTable;
++                 limit::Int=-1, include_ambiguous::Bool=false)
+     if isconcretetype(sig)
+         # as for concrete types, we cache result at on the next level
+-        return findall(sig, table.table; limit)
++        return findall(sig, table.table; limit, include_ambiguous)
+     end
+-    key = MethodMatchKey(sig, limit)
++    key = MethodMatchKey(sig, limit, include_ambiguous)
+     if haskey(table.cache, key)
+         return table.cache[key]
+     else
+-        return table.cache[key] = findall(sig, table.table; limit)
++        return table.cache[key] = findall(sig, table.table; limit, include_ambiguous)
+     end
+ end
+ 
+diff --git a/Compiler/test/AbstractInterpreter.jl b/Compiler/test/AbstractInterpreter.jl
+index 7e918c5b6a..3c1d7fb8a8 100644
+--- a/Compiler/test/AbstractInterpreter.jl
++++ b/Compiler/test/AbstractInterpreter.jl
+@@ -33,6 +33,41 @@ end
+ @MethodTable OVERLAY_MT
+ Compiler.method_table(interp::MTOverlayInterp) = Compiler.OverlayMethodTable(Compiler.get_inference_world(interp), OVERLAY_MT)
+ 
++# `include_ambiguous` preserves ambiguous matches across method-table views and cache modes.
++ambiguous_lookup(x::Integer, y) = 1
++ambiguous_lookup(x, y::Integer) = 2
++ambiguous_overlay(x, y) = 0
++@overlay OVERLAY_MT ambiguous_overlay(x::Integer, y) = 1
++@overlay OVERLAY_MT ambiguous_overlay(x, y::Integer) = 2
++
++@testset "ambiguous method lookup" begin
++    world = Base.get_world_counter()
++    sig = Tuple{typeof(ambiguous_lookup),Integer,Integer}
++    internal = Compiler.InternalMethodTable(world)
++    filtered = Compiler.findall(sig, internal)
++    inclusive = Compiler.findall(sig, internal; include_ambiguous=true)
++    @test filtered !== nothing
++    @test Compiler.length(filtered) == 0
++    @test inclusive !== nothing
++    @test inclusive.ambig
++    @test Compiler.length(inclusive) == 2
++    @test Set(match.method for match in inclusive) == Set(methods(ambiguous_lookup))
++
++    cached = Compiler.CachedMethodTable(internal)
++    @test Compiler.length(Compiler.findall(sig, cached)) == 0
++    @test Compiler.length(Compiler.findall(sig, cached; include_ambiguous=true)) == 2
++    @test length(cached.cache) == 2
++
++    overlay_sig = Tuple{typeof(ambiguous_overlay),Integer,Integer}
++    overlay = Compiler.OverlayMethodTable(world, OVERLAY_MT)
++    overlay_matches = Compiler.findall(overlay_sig, overlay; include_ambiguous=true)
++    @test overlay_matches !== nothing
++    @test overlay_matches.ambig
++    @test Compiler.length(overlay_matches) == 2
++    base_method = only(methods(ambiguous_overlay))
++    @test all(match -> match.method !== base_method, overlay_matches)
++end
++
+ function Compiler.add_remark!(interp::MTOverlayInterp, ::Compiler.InferenceState, remark)
+     if interp.meta !== nothing
+         # Core.println(remark)
