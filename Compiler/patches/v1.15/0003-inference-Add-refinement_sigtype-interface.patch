@@ -26,7 +26,7 @@ refinements that the callees provide, e.g. through `InterConditional`.
  1 file changed, 14 insertions(+), 7 deletions(-)
 
 diff --git a/Compiler/src/abstractinterpretation.jl b/Compiler/src/abstractinterpretation.jl
-index afbaf6cd4d7e13c408198557d62655c5c83a9bd2..8ae34261e976cb33d019d5a117402b2e9db2ede0 100644
+index 569415fab6a3f8695e46d75e839d183fe9e80f04..352c248ad5822d619948874cb1fec4c8db6e69d4 100644
 --- a/Compiler/src/abstractinterpretation.jl
 +++ b/Compiler/src/abstractinterpretation.jl
 @@ -270,7 +270,8 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun

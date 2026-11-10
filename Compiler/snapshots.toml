@@ -17,14 +17,14 @@ runtime = { lower = "1.13-", upper = "1.14-" }
 destination = "snapshots/v1.13"
 
 [snapshots."1.14"]
-base = "48b666a545bc206dd5a3604c4596407b2e6c2b1e"
+base = "e94d8131b6867eb8c5aa7503cf6fdc68532a120e"
 base-branch = "release-1.14"
 patches = "patches/v1.14"
 runtime = { lower = "1.14-", upper = "1.15-" }
 destination = "snapshots/v1.14"
 
 [snapshots."1.15"]
-base = "d2d600659bc27d30b58d9acefcde3976a69a3324"
+base = "eb844b8ebd999935a31829e19823db70c711d05f"
 base-branch = "master"
 patches = "patches/v1.15"
 runtime = { lower = "1.15-", upper = "1.16-" }
