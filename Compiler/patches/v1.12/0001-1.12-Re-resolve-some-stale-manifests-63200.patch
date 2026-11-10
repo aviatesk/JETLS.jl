@@ -9,7 +9,7 @@ Subject: [PATCH] 1.12: Re-resolve some stale manifests (#63200)
  2 files changed, 5 insertions(+), 4 deletions(-)
 
 diff --git a/Compiler/extras/CompilerDevTools/Manifest.toml b/Compiler/extras/CompilerDevTools/Manifest.toml
-index bcc78f1ded..299e39b1d6 100644
+index bcc78f1ded34a04c3e84fc0b5c760122f40601b1..299e39b1d64751e3c4274abad9cf926c4f8d1776 100644
 --- a/Compiler/extras/CompilerDevTools/Manifest.toml
 +++ b/Compiler/extras/CompilerDevTools/Manifest.toml
 @@ -1,15 +1,16 @@
@@ -32,7 +32,7 @@ index bcc78f1ded..299e39b1d6 100644
  uuid = "92b2d91f-d2bd-4c05-9214-4609ac33433f"
  version = "0.0.0"
 diff --git a/Compiler/test/CompilerLoadingTest/Manifest.toml b/Compiler/test/CompilerLoadingTest/Manifest.toml
-index 7fb3452a61..8c37742319 100644
+index 7fb3452a610174767a2928be7837fe7fa1c4002a..8c37742319ee8eb64b279d9ab9590c27c51e7d79 100644
 --- a/Compiler/test/CompilerLoadingTest/Manifest.toml
 +++ b/Compiler/test/CompilerLoadingTest/Manifest.toml
 @@ -1,13 +1,13 @@

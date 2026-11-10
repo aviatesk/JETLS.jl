@@ -51,7 +51,7 @@ Assisted-by: Claude Code (Opus 5.5)
  4 files changed, 178 insertions(+), 1 deletion(-)
 
 diff --git a/Compiler/src/inferencestate.jl b/Compiler/src/inferencestate.jl
-index 00b8d41a22..948d5cd028 100644
+index 00b8d41a22817b9132b74be1a392ff923a90bc99..948d5cd0280c416d9ccaab17bc2315c2857aeb5d 100644
 --- a/Compiler/src/inferencestate.jl
 +++ b/Compiler/src/inferencestate.jl
 @@ -320,6 +320,8 @@ mutable struct InferenceState{I<:AbstractInterpreter}
@@ -82,7 +82,7 @@ index 00b8d41a22..948d5cd028 100644
              _time_ns(), 0.0, 0, 0,
              restrict_abstract_call_sites, cache_mode, insert_coverage,
 diff --git a/Compiler/src/typeinfer.jl b/Compiler/src/typeinfer.jl
-index 1374f203a4..faf496d8d0 100644
+index 1374f203a45ccc53d2e09e9212b8d8b693ef3a93..faf496d8d07aaea11facf38f93d17dbddb273c1d 100644
 --- a/Compiler/src/typeinfer.jl
 +++ b/Compiler/src/typeinfer.jl
 @@ -1258,6 +1258,91 @@ function return_cached_result(interp::AbstractInterpreter, method::Method,
@@ -198,7 +198,7 @@ index 1374f203a4..faf496d8d0 100644
          if cache_mode == CACHE_MODE_GLOBAL
              reserve_start = _time_ns() # subtract engine_reserve (thread-synchronization) time from callers to avoid double-counting
 diff --git a/Compiler/src/types.jl b/Compiler/src/types.jl
-index b733688691..3760dde2dd 100644
+index b733688691b88d1d5482dab7861af45263919ad9..3760dde2dd915b9ef8ab092881a93644fdd30998 100644
 --- a/Compiler/src/types.jl
 +++ b/Compiler/src/types.jl
 @@ -211,6 +211,24 @@ end
@@ -227,7 +227,7 @@ index b733688691..3760dde2dd 100644
  function InferenceResult(mi::MethodInstance, 𝕃::AbstractLattice=fallback_lattice)
      argtypes = matching_cache_argtypes(𝕃, mi)
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index 43412ab952..2a3e525cec 100644
+index 43412ab952e3716f216a2c4d6800c9f116d71210..2a3e525cecd907900ce96faaf73426589ac1964a 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
 @@ -6724,6 +6724,70 @@ Base.@constprop :aggressive type_level_recurse2(x...) = type_level_recurse1(x...

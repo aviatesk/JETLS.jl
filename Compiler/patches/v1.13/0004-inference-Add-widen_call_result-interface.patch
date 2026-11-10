@@ -29,7 +29,7 @@ by overloading this method without forking the call inference pipeline.
  2 files changed, 23 insertions(+), 8 deletions(-)
 
 diff --git a/Compiler/src/abstractinterpretation.jl b/Compiler/src/abstractinterpretation.jl
-index 018c195433..7a84c99995 100644
+index 018c1954334cd22d37bc7e4ab6e5860c393684b5..7a84c999953868a572c5c0f2b39f6e6b1341f980 100644
 --- a/Compiler/src/abstractinterpretation.jl
 +++ b/Compiler/src/abstractinterpretation.jl
 @@ -119,6 +119,9 @@ mutable struct CallInferenceState
@@ -65,7 +65,7 @@ index 018c195433..7a84c99995 100644
              end
              # if from_interprocedural added any pclimitations to the set inherited from the arguments,
 diff --git a/Compiler/src/types.jl b/Compiler/src/types.jl
-index 8091f4f63a..d6a6065cab 100644
+index 8091f4f63a14d7d1cdcb4be808299397ce60e5fd..d6a6065cabbce34bc6295a730bc6716115772e5f 100644
 --- a/Compiler/src/types.jl
 +++ b/Compiler/src/types.jl
 @@ -482,6 +482,19 @@ but `AbstractInterpreter` doesn't provide a specific interface for configuring i

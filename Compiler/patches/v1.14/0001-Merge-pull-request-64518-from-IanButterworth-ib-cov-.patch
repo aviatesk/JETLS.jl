@@ -14,7 +14,7 @@ Compiler: test the IR verifier and dominator tree updates, and fix the bugs they
  5 files changed, 364 insertions(+), 63 deletions(-)
 
 diff --git a/Compiler/src/ssair/domtree.jl b/Compiler/src/ssair/domtree.jl
-index 2691fe2b0f..45c8e3094d 100644
+index 2691fe2b0f41f8f51fdabf2f8cf9c84b8060e5b8..45c8e3094d586d95da137c8a65cf843a191ac7da 100644
 --- a/Compiler/src/ssair/domtree.jl
 +++ b/Compiler/src/ssair/domtree.jl
 @@ -520,12 +520,12 @@ function domtree_delete_edge!(domtree::DomTree, blocks::Vector{BasicBlock},
@@ -100,7 +100,7 @@ index 2691fe2b0f..45c8e3094d 100644
              # Keep track of highest BB number to resize arrays with
              if new_bb > max_new_bb
 diff --git a/Compiler/src/ssair/verify.jl b/Compiler/src/ssair/verify.jl
-index e9389c8cd1..2d5e0b101d 100644
+index e9389c8cd1aa538abf62d38fbe2e95980f26929b..2d5e0b101d7b4cf3f49a9c248378ccd02631f962 100644
 --- a/Compiler/src/ssair/verify.jl
 +++ b/Compiler/src/ssair/verify.jl
 @@ -19,8 +19,10 @@ if !isdefined(@__MODULE__, Symbol("@verify_error"))
@@ -213,7 +213,7 @@ index e9389c8cd1..2d5e0b101d 100644
              end
              n = 1
 diff --git a/Compiler/test/irpasses.jl b/Compiler/test/irpasses.jl
-index 143946d54c..1d4027d9c4 100644
+index 143946d54cccd3bb70c1e267baaf8afc4b90f89a..1d4027d9c403dfc17492174a0b64f8b011ae9e79 100644
 --- a/Compiler/test/irpasses.jl
 +++ b/Compiler/test/irpasses.jl
 @@ -2087,7 +2087,7 @@ let code = Any[
@@ -235,7 +235,7 @@ index 143946d54c..1d4027d9c4 100644
          ReturnNode(1),
          # block 8
 diff --git a/Compiler/test/ssair.jl b/Compiler/test/ssair.jl
-index 1766734422..8814e15ddf 100644
+index 17667344225e9210b4cb7d4b5e8db05cadc48497..8814e15ddf703c8047a13f66a1ef8398b363e656 100644
 --- a/Compiler/test/ssair.jl
 +++ b/Compiler/test/ssair.jl
 @@ -199,6 +199,207 @@ let code = Any[
@@ -447,7 +447,7 @@ index 1766734422..8814e15ddf 100644
  let code = Any[
          # Block 1
 diff --git a/Compiler/test/tarjan.jl b/Compiler/test/tarjan.jl
-index 6a34bd8597..3c87cfc55a 100644
+index 6a34bd85971cf452e737c024637c4f4d2c9b49dc..3c87cfc55a503d0f442ceecbf7304875e8005217 100644
 --- a/Compiler/test/tarjan.jl
 +++ b/Compiler/test/tarjan.jl
 @@ -168,3 +168,123 @@ end

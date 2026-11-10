@@ -23,7 +23,7 @@ Assisted-by: Claude Code (Opus 5.5)
  2 files changed, 28 insertions(+)
 
 diff --git a/Compiler/src/abstractinterpretation.jl b/Compiler/src/abstractinterpretation.jl
-index b7cda009e4..018c195433 100644
+index b7cda009e48706b1e5f73aa31c55765db8192590..018c1954334cd22d37bc7e4ab6e5860c393684b5 100644
 --- a/Compiler/src/abstractinterpretation.jl
 +++ b/Compiler/src/abstractinterpretation.jl
 @@ -2779,6 +2779,24 @@ function argtypes_are_actually_getglobal(argtypes::Vector{Any})
@@ -62,7 +62,7 @@ index b7cda009e4..018c195433 100644
          elseif f === invoke
              return abstract_invoke(interp, arginfo, si, sv)
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index f7e0d8cb9a..2be4c455ec 100644
+index f7e0d8cb9a506a8b6fc85145725002a76951a41c..2be4c455ecd6be1a881e5bac906aed062a44b0cc 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
 @@ -6777,4 +6777,11 @@ end

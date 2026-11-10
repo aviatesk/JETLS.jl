@@ -19,7 +19,7 @@ Assisted-by: Claude Code (Claude Opus 5.5)
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/Compiler/src/typeinfer.jl b/Compiler/src/typeinfer.jl
-index f6d15c8a8e..1171b1830b 100644
+index f6d15c8a8eea38857a742bf04c83c730da2e0e17..1171b1830b36e6c20d05c0a3ce2c7e387fac6ba0 100644
 --- a/Compiler/src/typeinfer.jl
 +++ b/Compiler/src/typeinfer.jl
 @@ -444,7 +444,7 @@ end

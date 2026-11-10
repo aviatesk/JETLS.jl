@@ -13,7 +13,7 @@ without needing complex lattice element merging.
  2 files changed, 6 insertions(+)
 
 diff --git a/Compiler/src/abstractinterpretation.jl b/Compiler/src/abstractinterpretation.jl
-index 7a84c99995..cd7fd26497 100644
+index 7a84c999953868a572c5c0f2b39f6e6b1341f980..cd7fd264970f9a9ae33ddc025ac9575000960163 100644
 --- a/Compiler/src/abstractinterpretation.jl
 +++ b/Compiler/src/abstractinterpretation.jl
 @@ -4267,6 +4267,7 @@ end
@@ -25,7 +25,7 @@ index 7a84c99995..cd7fd26497 100644
          if !⊑(𝕃ₚ, exct, frame.exc_bestguess)
              frame.exc_bestguess = tmerge(𝕃ₚ, frame.exc_bestguess, exct)
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index dda2e1a2e4..8f20354cb1 100644
+index dda2e1a2e4e940100069ed79ab04c667bcc53ae6..8f20354cb1c654de135016e2c862fda2d7315a2d 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
 @@ -6825,6 +6825,11 @@ let rt = only(Base.return_types(map, (typeof(frec_rt_cycle), Vector{TreeRTCycle}

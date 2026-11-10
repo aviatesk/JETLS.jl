@@ -18,7 +18,7 @@ result is consistently inferred as `Bottom`.
  2 files changed, 5 insertions(+), 9 deletions(-)
 
 diff --git a/Compiler/src/tfuncs.jl b/Compiler/src/tfuncs.jl
-index c72e062afb..39b33a1dc4 100644
+index c72e062afb885575dab195eda79c9dfda560dbd0..39b33a1dc494dbd8d43f709be9496838418ce9c1 100644
 --- a/Compiler/src/tfuncs.jl
 +++ b/Compiler/src/tfuncs.jl
 @@ -1149,12 +1149,9 @@ end
@@ -38,7 +38,7 @@ index c72e062afb..39b33a1dc4 100644
          end
          s00 = s
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index 2be4c455ec..95e109b5cd 100644
+index 2be4c455ecd6be1a881e5bac906aed062a44b0cc..95e109b5cd02612dfd8c7c15900b07a30dd1a6da 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
 @@ -136,8 +136,6 @@ end

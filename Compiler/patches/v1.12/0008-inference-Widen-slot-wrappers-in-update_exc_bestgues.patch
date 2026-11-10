@@ -13,7 +13,7 @@ without needing complex lattice element merging.
  2 files changed, 6 insertions(+)
 
 diff --git a/Compiler/src/abstractinterpretation.jl b/Compiler/src/abstractinterpretation.jl
-index 1ffd064ef3..e6434834f1 100644
+index 1ffd064ef3e5cbedb115ce25c47a36cbf5258c9a..e6434834f15b9883b71ac8e365e0c1f7e1e8d052 100644
 --- a/Compiler/src/abstractinterpretation.jl
 +++ b/Compiler/src/abstractinterpretation.jl
 @@ -4129,6 +4129,7 @@ end
@@ -25,7 +25,7 @@ index 1ffd064ef3..e6434834f1 100644
          if !⊑(𝕃ₚ, exct, frame.exc_bestguess)
              frame.exc_bestguess = tmerge(𝕃ₚ, frame.exc_bestguess, exct)
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index f848f67dca..da6df4c37a 100644
+index f848f67dcabd17de30cbbbdf3c68e65ac73b3cac..da6df4c37a4f5e35f2ad8450a78b99c566522fcc 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
 @@ -6412,3 +6412,8 @@ frec_rt_cycle(t::TreeRTCycle) =

@@ -447,12 +447,14 @@ function export_patches(
 
     mktempdir() do output
         pathspec = ":(top)$(config.upstream.subdir)"
-        # Pin the options that user configuration could otherwise change so that exported
-        # patches stay stable across maintainers and keep applying with `git apply`.
+        # Pin the options that user configuration could otherwise change, and write full
+        # blob names on the `index` lines, which git otherwise abbreviates depending on the
+        # number of objects in the repository, so that exported patches stay stable across
+        # maintainers and repositories and keep applying with `git apply`.
         run(`git -C $repository
             format-patch --quiet --zero-commit --no-signature --no-numbered --no-thread
             --no-cover-letter --no-attach --no-signoff --no-base --no-relative
-            --unified=3 --src-prefix=a/ --dst-prefix=b/ --suffix=.patch
+            --unified=3 --full-index --src-prefix=a/ --dst-prefix=b/ --suffix=.patch
             --output-directory=$output $range -- $pathspec`)
         exported = readdir(output)
         isempty(exported) &&

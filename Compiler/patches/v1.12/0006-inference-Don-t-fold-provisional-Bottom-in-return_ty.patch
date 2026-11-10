@@ -52,7 +52,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  2 files changed, 31 insertions(+), 1 deletion(-)
 
 diff --git a/Compiler/src/tfuncs.jl b/Compiler/src/tfuncs.jl
-index 34e578eee1..7b266e8eee 100644
+index 34e578eee10069685eaffd38cee44ed4ee0ab637..7b266e8eeea22d02368c98a6a86470a65c902398 100644
 --- a/Compiler/src/tfuncs.jl
 +++ b/Compiler/src/tfuncs.jl
 @@ -3119,7 +3119,19 @@ function return_type_tfunc(interp::AbstractInterpreter, argtypes::Vector{Any}, s
@@ -77,7 +77,7 @@ index 34e578eee1..7b266e8eee 100644
              return CallMeta(Const(rt), Union{}, RT_CALL_EFFECTS, info)
          elseif isa(sv, InferenceState) && !isempty(sv.pclimitations)
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index 0cdb6db139..f848f67dca 100644
+index 0cdb6db13908ab4d4c1f3e0c0a6e9012df8c2748..f848f67dcabd17de30cbbbdf3c68e65ac73b3cac 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
 @@ -6394,3 +6394,21 @@ issue63351(c, xs) = c ? (1, :a, xs...) : (2, :a, xs...)

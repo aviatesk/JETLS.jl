@@ -18,7 +18,7 @@ Assisted-by: Zed (GPT-5.6-Sol)
  2 files changed, 60 insertions(+), 18 deletions(-)
 
 diff --git a/Compiler/src/methodtable.jl b/Compiler/src/methodtable.jl
-index 09d29d5c72..21c46f179d 100644
+index 09d29d5c7254b25c5c410ac3d019aff36d9843f7..21c46f179d17cc1449710e0f323467b3cebb9fbf 100644
 --- a/Compiler/src/methodtable.jl
 +++ b/Compiler/src/methodtable.jl
 @@ -42,7 +42,9 @@ end
@@ -110,7 +110,7 @@ index 09d29d5c72..21c46f179d 100644
  end
  
 diff --git a/Compiler/test/AbstractInterpreter.jl b/Compiler/test/AbstractInterpreter.jl
-index 7e918c5b6a..3c1d7fb8a8 100644
+index 7e918c5b6a8d29b07f30b85b0263e43ef8bf0fa5..3c1d7fb8a8904fccfb69d80d22cf0f170ab0d939 100644
 --- a/Compiler/test/AbstractInterpreter.jl
 +++ b/Compiler/test/AbstractInterpreter.jl
 @@ -33,6 +33,41 @@ end

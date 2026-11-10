@@ -31,7 +31,7 @@ Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
  2 files changed, 37 insertions(+)
 
 diff --git a/Compiler/src/tfuncs.jl b/Compiler/src/tfuncs.jl
-index 39b33a1dc4..bf6ad77ad9 100644
+index 39b33a1dc494dbd8d43f709be9496838418ce9c1..bf6ad77ad9b2a07147e41be89c65a9b5e6f1748c 100644
 --- a/Compiler/src/tfuncs.jl
 +++ b/Compiler/src/tfuncs.jl
 @@ -1356,6 +1356,8 @@ end
@@ -55,7 +55,7 @@ index 39b33a1dc4..bf6ad77ad9 100644
      T = _fieldtype_tfunc(𝕃, o′, f, isconcretetype(o′))
      T === Bottom && return Bottom
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index 95e109b5cd..9f45211084 100644
+index 95e109b5cd02612dfd8c7c15900b07a30dd1a6da..9f4521108429760ca3dd8276ff8b7c75f4f3c31b 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
 @@ -1883,6 +1883,37 @@ let setfield!_nothrow(@nospecialize xs...) =

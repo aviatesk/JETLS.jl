@@ -10,7 +10,7 @@ Subject: [PATCH] inference: Keep trailing `Vararg` when merging vararg-tuple
  2 files changed, 13 insertions(+)
 
 diff --git a/Compiler/src/typelimits.jl b/Compiler/src/typelimits.jl
-index dcb1f70e7c..be140e6ad7 100644
+index dcb1f70e7c721f7a24ffb01a23bf7078289dd871..be140e6ad7bd70dbed399a9b74bb8964a6616d6a 100644
 --- a/Compiler/src/typelimits.jl
 +++ b/Compiler/src/typelimits.jl
 @@ -604,6 +604,12 @@ end
@@ -27,7 +27,7 @@ index dcb1f70e7c..be140e6ad7 100644
              bi = getfield_tfunc(𝕃, typeb, Const(i))
              ft = fieldtype(aty, i)
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index 51fb5718c0..2e41547f23 100644
+index 51fb5718c078a65d26342e0434cb655587328997..2e41547f23dad2c147930aeec13a1632842f4c78 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
 @@ -6357,3 +6357,10 @@ let
