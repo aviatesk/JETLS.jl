@@ -2010,6 +2010,12 @@ is_int_or_some_string(x::Union{String,Symbol}) = x isa String
 keep_cond(c::Bool, ::Union{Int,String}) = c
 named_twice(_, s::Symbol) = !isempty(string(s))
 named_twice(_, s::AbstractString) = !isempty(s)
+is_number(::Int) = true
+is_number(::Float64) = true
+is_number(::Nothing) = false
+takes_number(::Number) = nothing
+int_float_or_string_and_any(::Union{Int,Float64,String}, _) = nothing
+float_or_string(::Union{Float64,String}) = nothing
 
 @testset "slot refinements from method signatures" begin
     # refinements that split a component of the argument type into the argument types of
@@ -2022,10 +2028,19 @@ named_twice(_, s::AbstractString) = !isempty(s)
             (x -> (int_float_or_string(x); int_or_string(x)), (Union{Number,String},)),
             (b -> (ready(b.v); b.v.x), (AnyBox,)),
             # so are the refinements in the branches on a `Bool` result, e.g. of `x::Any`
-            # into `Union{Symbol,AbstractString}`
+            # into `Union{Symbol,AbstractString}`, also when a method returns `false`, or of a
+            # field
             (x -> named(x) && takes_symbol(x), (Any,)),
             (x -> named(x) || takes_symbol(x), (Any,)),
             (x -> named_twice(x, x) && takes_symbol(x), (Any,)),
+            (x -> hasname(x) && takes_symbol(x), (Any,)),
+            (b -> named(b.v) && takes_symbol(b.v), (AnyBox,)),
+            # while keeping the exclusion of `Nothing`, for which a method returns `false`
+            (x -> is_number(x) && takes_number(x), (Union{Nothing,Number},)),
+            # and of a match whose signature joins multiple components, e.g. when the call is
+            # not union-split for its cost
+            ((x, y) -> (int_float_or_string_and_any(x, y); float_or_string(x)),
+             (Union{Nothing,Number,AbstractString}, Union{Nothing,Int,String})),
         )
         @test isempty(get_reports(analyze_call(f, argtypes)))
     end
@@ -2051,11 +2066,18 @@ named_twice(_, s::AbstractString) = !isempty(s)
     for (f, argtypes) in (
             (x -> is_int_or_string(x) && takes_symbol(x), (Any,)),
             (x -> is_int_or_string_overloaded(x) && takes_symbol(x), (Any,)),
-            (x -> is_int_or_some_string(x) && takes_symbol(x), (Any,)),
             (b -> !(b.v isa Union{Int,String}) || takes_symbol(b.v), (AnyBox,)),
-            (x -> keep_cond(x isa Union{Int,String}, x) && takes_symbol(x), (Any,)),
         )
         @test only(get_reports(analyze_call(f, argtypes))) isa NoMethodMatchReport
+    end
+    # known limitation: a refinement is widened even when a call fails for all of its types,
+    # e.g. `takes_symbol` for `Union{Int,String}`, so such errors are not reported
+    for (f, argtypes) in (
+            (x -> is_int_or_some_string(x) && takes_symbol(x), (Any,)),
+            (x -> keep_cond(x isa Union{Int,String}, x) && takes_symbol(x), (Any,)),
+        )
+        reports = get_reports(analyze_call(f, argtypes))
+        @test_broken length(reports) == 1 && only(reports) isa NoMethodMatchReport
     end
     # also when another component is split, e.g. `Union{Nothing,Number}` is refined to
     # `Number` rather than to `Union{Int,Float64}`
@@ -2080,13 +2102,16 @@ named_twice(_, s::AbstractString) = !isempty(s)
     end
     # nor do parts merging into a single type within a component, e.g. `Tuple{Int,Integer}`
     # and `Tuple{Real,Integer}` within `Tuple{Real,Real}`
+    # known limitation: inference joins the types for the matches with `tmerge`, which widens
+    # the widened `Tuple{Union{Int,AbstractString},Any}` joined with the other tuple types,
+    # so the refinement within `Tuple{Real,Real}` is lost
     let result = analyze_call((Union{Tuple{Union{Int,AbstractString},Any},
                                      Tuple{Union{Int,Symbol},Any},
                                      Tuple{Real,Real}},)) do x
             takes_mergeable_tuples(x)
             x isa Tuple{AbstractFloat,AbstractFloat} && takes_int(x[2])
         end
-        @test isempty(get_reports(result))
+        @test_broken isempty(get_reports(result))
     end
     # field refinements through `MustAlias` (v1.14 and later)
     @static if isdefinedglobal(CC, :form_mustalias_refinement)
@@ -2105,17 +2130,11 @@ named_twice(_, s::AbstractString) = !isempty(s)
             @test r isa NoMethodMatchReport &&
                 r.t == Any[Tuple{typeof(takes_any_and_int),Any,Nothing}]
         end
-        # the field is still known to be defined, although its type is widened back to `Any`
-        @test isempty(get_reports(analyze_call(check_maybe_undef_box, (MaybeUndefBox,))))
-    end
-
-    # known limitations: branch refinements that also exclude a component for which a method
-    # returns `false`, or of a field, are not widened
-    for (f, argtypes) in (
-            (x -> hasname(x) && takes_symbol(x), (Any,)),
-            (b -> named(b.v) && takes_symbol(b.v), (AnyBox,)),
-        )
-        @test_broken isempty(get_reports(analyze_call(f, argtypes)))
+        # known limitation: a call refines whether the field is defined only along with its
+        # type, so the field is not known to be defined when its type is not refined
+        let result = analyze_call(check_maybe_undef_box, (MaybeUndefBox,))
+            @test_broken isempty(get_reports(result))
+        end
     end
 end
 

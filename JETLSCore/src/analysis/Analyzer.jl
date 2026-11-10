@@ -642,7 +642,7 @@ function CC.abstract_call_gf_by_type(
         si::CC.StmtInfo, atype::Any, vtypes::Union{Vector{CC.VarState},Nothing},
         sv::CC.InferenceState, max_methods::Int)
     after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, sv, max_methods)
-    return unsplit_slot_refinements(analyzer, ret, arginfo, vtypes, sv)
+    return ret
 end
 else
 function CC.abstract_call_gf_by_type(
@@ -653,17 +653,17 @@ function CC.abstract_call_gf_by_type(
         analyzer::ToplevelAbstractAnalyzer, func::Any, arginfo::CC.ArgInfo,
         si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
     after_abstract_call_gf_by_type(analyzer, ret, func, arginfo, sv, max_methods)
-    return unsplit_slot_refinements(analyzer, ret, arginfo, #=vtypes=#nothing, sv)
+    return ret
 end
 end
 
 """
-    unsplit_slot_refinements(analyzer::LSAnalyzer, ret::CC.Future{CC.CallMeta},
-        arginfo::CC.ArgInfo, vtypes::Union{Nothing,Vector{CC.VarState}},
-        sv::CC.InferenceState) -> CC.Future{CC.CallMeta}
+    CC.refinement_sigtype(analyzer::LSAnalyzer, applicable::Vector{CC.MethodMatchTarget},
+        argtypes::Vector{Any}, j::Int, i::Int) -> sigt
 
-Widens the slot refinements of a call so that they do not split a component of an argument
-type into multiple union components.
+Widens the signature type of `applicable[j]` that inference refines the `i`-th argument
+slot of a call with, so that the refinements do not split a component of the argument type
+into multiple union components.
 
 Inference refines the argument slots of a call to the argument types of the matched methods,
 e.g. `ready(x)` refines `x::Any` to `Union{HasX,NoX}` when `ready` has methods for `HasX`
@@ -671,190 +671,72 @@ and `NoX`. Such a union reflects which methods exist rather than which values th
 code passes, while a method error is reported for an abstract argument type only when no
 method matches it, but for a union-split call whenever some branch has no matching method.
 So `takes_hasx(x)` after `ready(x)` would be reported for `NoX`, although it is not reported
-without the preceding call. Such split components are widened back to the component of the
-argument type, so `x::Any` stays `Any` after `ready(x)`, and a call to a function only
-defined for `Int` and `Float64` refines `x::Union{Nothing,Number}` to `Number`. This also
-covers refinements to unions involving `Missing` by loosely typed calls, e.g. `x & 0x0f`
-refining `x::Any` to `Union{Missing,Integer}`.
+without the preceding call. The signature types of such split components are widened back
+to the component of the argument type, so `x::Any` stays `Any` after `ready(x)`, and a call
+to a function only defined for `Int` and `Float64` refines `x::Union{Nothing,Number}` to
+`Number`. This also covers refinements to unions involving `Missing` by loosely typed calls,
+e.g. `x & 0x0f` refining `x::Any` to `Union{Missing,Integer}`. Other refinements are kept,
+e.g. `Union{Nothing,Int}` refined to `Int`, so that the error reported at the refining call
+is not reported again afterwards, or `Any` refined to `Int` by a function only defined for
+`Int`.
 
-Other refinements are kept, e.g. `Union{Nothing,Int}` refined to `Int`, so that the error
-reported at the refining call is not reported again afterwards, or `Any` refined to `Int`
-by a function only defined for `Int`.
-
-The `Conditional` result of a call to a function returning `Bool` refines the slot passed as
-an argument in the branches on the result in the same way, e.g. `if isidentifier(x)` refines
-`x::Any` to `Union{AbstractString,Symbol}` in the `then` branch. Unlike slot refinements, it
-may also come from the callees, e.g. `x isa Union{Int,String}` in the body of a predicate,
-so its types are widened only when they are exactly the join of the argument types of the
-matched methods, i.e. when they come from the method signatures alone. It is kept when it
-may be propagated from a `Conditional` argument, e.g. of `!`.
+The same types refine the argument slot in the branches on the result of a call returning
+`Bool`, e.g. `if isidentifier(x)` would refine `x::Any` to `Union{AbstractString,Symbol}`
+in the `then` branch, and the fields passed through `MustAlias`es. The refinements that the
+callees provide on top of them, e.g. `x isa Union{Int,String}` in the body of a predicate,
+are kept for each match. Since the types for the matches are joined afterwards, such a
+refinement is still lost within a split component when another match contributes the
+widened component to the same branch, e.g. `x isa String` in a method for
+`Union{String,Symbol}` when a method for `Int` returns `true`.
 """
-function unsplit_slot_refinements(
-        analyzer::LSAnalyzer, ret::CC.Future{CC.CallMeta}, arginfo::CC.ArgInfo,
-        vtypes::Union{Nothing,Vector{CC.VarState}}, sv::CC.InferenceState
+function CC.refinement_sigtype(
+        ::LSAnalyzer, applicable::Vector{CC.MethodMatchTarget}, argtypes::Vector{Any},
+        j::Int, i::Int
     )
-    (; fargs, argtypes) = arginfo
-    fargs === nothing && return ret
-    return CC.Future{CC.CallMeta}(ret, analyzer, sv) do call::CC.CallMeta, _, _
-        refinements = call.refinements
-        if refinements isa Vector{Any}
-            for i = 1:length(fargs)
-                fargᵢ = fargs[i]
-                fargᵢ isa CC.SlotNumber || continue
-                slot = CC.slot_id(fargᵢ)
-                refined = @something refinements[slot] continue
-                refinements[slot] = unsplit_refinement(refined, CC.widenslotwrapper(argtypes[i]))
-            end
-            vtypes === nothing || unsplit_field_refinements!(refinements, vtypes)
-        end
-        rt = call.rt
-        rt isa CC.Conditional || return call
-        unsplit = unsplit_conditional(rt, call.info, fargs, argtypes, sv)
-        unsplit === rt && return call
-        return CC.CallMeta(unsplit, call.exct, call.effects, call.info, call.refinements)
-    end
-end
-
-function unsplit_conditional(
-        cnd::CC.Conditional, @nospecialize(info::CC.CallInfo), fargs::Vector{Any},
-        argtypes::Vector{Any}, sv::CC.InferenceState
-    )
-    original = matched = nothing
-    for i = 1:length(fargs)
-        argtype = argtypes[i]
-        # propagated from a `Conditional` argument, e.g. of `!`
-        argtype isa CC.Conditional && argtype.slot == cnd.slot && return cnd
-        arg = CC.ssa_def_slot(fargs[i], sv)
-        arg isa CC.SlotNumber && CC.slot_id(arg) == cnd.slot || continue
-        matchedᵢ = @something matched_argtype(info, i) return cnd
-        # `from_interconditional` intersects the refinements of all the arguments of the slot
-        matched = matched === nothing ? matchedᵢ : typeintersect(matched, matchedᵢ)
-        original = @something original CC.widenslotwrapper(argtype)
-    end
-    (original === nothing || matched === nothing) && return cnd
-    thentype = unsplit_matched_refinement(cnd.thentype, original, matched)
-    elsetype = unsplit_matched_refinement(cnd.elsetype, original, matched)
-    thentype === cnd.thentype && elsetype === cnd.elsetype && return cnd
-    return with_conditional_types(cnd, thentype, elsetype)
-end
-
-# The join of the `i`-th argument types of the matched methods of a call, or `nothing` if
-# they are unknown.
-function matched_argtype(@nospecialize(info::CC.CallInfo), i::Int)
-    @static if isdefinedglobal(CC, :ConstCallInfo)
-        if isa(info, CC.ConstCallInfo)
-            info = info.call
-        end
-    end
-    if isa(info, CC.MethodMatchInfo)
-        splits = CC.MethodMatchInfo[info]
-    elseif isa(info, CC.UnionSplitInfo)
-        splits = info.split
-    else
-        return nothing
-    end
-    matched = Union{}
-    for split in splits, match in split.results
-        matched = Union{matched, fieldtype(match.spec_types, i)}
-    end
-    return matched
-end
-
-function unsplit_matched_refinement(
-        @nospecialize(refined), @nospecialize(original), @nospecialize(matched)
-    )
-    CC.widenconst(refined) == matched || return refined
-    return @something unsplit_refinement(refined, original) original
-end
-
-@static if hasfield(CC.Conditional, :ssadef)
-with_conditional_types(cnd::CC.Conditional, @nospecialize(thentype), @nospecialize(elsetype)) =
-    CC.Conditional(cnd.slot, cnd.ssadef, thentype, elsetype; cnd.isdefined)
-else
-with_conditional_types(cnd::CC.Conditional, @nospecialize(thentype), @nospecialize(elsetype)) =
-    CC.Conditional(cnd.slot, thentype, elsetype; cnd.isdefined)
-end
-
-# Widens the union components of `refined` that fall into the same union component of
-# `original` back to that component unless they merge into a single type, or returns
-# `nothing` if no refinement of `original` remains.
-function unsplit_refinement(@nospecialize(refined), @nospecialize(original))
-    refinedtyp = CC.widenconst(refined)
-    refinedtyp isa Union || return refined
-    CC.isvarargtype(original) && (original = CC.unwrapva(original))
-    originaltyp = CC.widenconst(original)
-    components = Base.uniontypes(originaltyp)
+    sigt = fieldtype(applicable[j].match.spec_types, i)
+    length(applicable) == 1 && !(sigt isa Union) && return sigt
+    argt = CC.widenslotwrapper(argtypes[i])
+    CC.isvarargtype(argt) && (argt = CC.unwrapva(argt))
+    argt = CC.widenconst(argt)
+    components = Base.uniontypes(argt)
     parts = fill!(Vector{Any}(undef, length(components)), Union{})
-    widened = false
-    for t in Base.uniontypes(refinedtyp)
+    for target in applicable
+        sigparts = @something signature_parts(fieldtype(target.match.spec_types, i), components) return argt
+        for (k, part) in sigparts
+            parts[k] = Union{parts[k],part}
+        end
+    end
+    widened = Union{}
+    for (k, part) in signature_parts(sigt, components)::Vector{Pair{Int,Any}}
+        # the parts within a component are widened back to the component unless they merge
+        # into a single type, e.g. `Tuple{Int,Integer}` and `Tuple{Real,Integer}` into
+        # `Tuple{Real,Integer}`
+        widened = Union{widened, parts[k] isa Union ? components[k] : part}
+    end
+    return widened
+end
+
+# The parts of the signature type `sigt` within the union `components` of an argument type,
+# paired with the indices of the components, or `nothing` if some of them fall into none of
+# `components`. A union component of `sigt` falls into the first component that contains it,
+# or otherwise into each component it overlaps, e.g. `Tuple{Union{Int,String}}` into
+# `Tuple{Int}` and `Tuple{String}`.
+function signature_parts(@nospecialize(sigt), components::Vector{Any})
+    sigparts = Pair{Int,Any}[]
+    for t in Base.uniontypes(sigt)
         idx = findfirst(@nospecialize(c) -> t <: c, components)
         if idx !== nothing
-            widened |= add_refined_part!(parts, components, idx, t)
-        else
-            # `t` joins multiple components, e.g. `Tuple{Union{Int,String}}` joins
-            # `Tuple{Int}` and `Tuple{String}`, so add its part within each of them
-            found = false
-            for j = 1:length(components)
-                part = typeintersect(t, components[j])
-                part === Union{} && continue
-                widened |= add_refined_part!(parts, components, j, part)
-                found = true
-            end
-            found || return nothing
+            push!(sigparts, Pair{Int,Any}(idx, t))
+            continue
         end
-    end
-    widened || return refined
-    newtyp = Union{parts...}
-    return originaltyp <: newtyp ? nothing : newtyp
-end
-
-# Adds `part` of a refinement within `components[idx]`. The component is widened back to
-# itself when the parts within it do not merge into a single type, unlike e.g.
-# `Tuple{Int,Integer}` and `Tuple{Real,Integer}` merging into `Tuple{Real,Integer}`.
-# Returns whether the component has been widened.
-function add_refined_part!(
-        parts::Vector{Any}, components::Vector{Any}, idx::Int, @nospecialize(part)
-    )
-    merged = Union{parts[idx],part}
-    if merged isa Union
-        parts[idx] = components[idx]
-        return true
-    end
-    parts[idx] = merged
-    return false
-end
-
-@static if isdefinedglobal(CC, :form_mustalias_refinement)
-# `MustAlias` arguments refine the aliased field within a `PartialStruct` of the slot. The
-# field types held by the aliases may be stale, e.g. when a later argument checks the field
-# with `isa`, so compare the fields with those of the slot type at the call instead.
-function unsplit_field_refinements!(refinements::Vector{Any}, vtypes::Vector{CC.VarState})
-    for slot = 1:length(refinements)
-        refined = refinements[slot]
-        refined isa Core.PartialStruct || continue
-        current = CC.widenmustalias(CC.ignorelimited(vtypes[slot].typ))
-        CC.widenconst(current) === refined.typ || continue
-        if current isa Core.PartialStruct
-            length(current.fields) == length(refined.fields) || continue
+        nparts = length(sigparts)
+        for k = 1:length(components)
+            part = typeintersect(t, components[k])
+            part === Union{} || push!(sigparts, Pair{Int,Any}(k, part))
         end
-        fields = nothing
-        for j = 1:length(refined.fields)
-            fieldtyp = refined.fields[j]
-            currentfieldtyp = current isa Core.PartialStruct ? current.fields[j] : fieldtype(refined.typ, j)
-            unsplit = @something unsplit_refinement(fieldtyp, currentfieldtyp) currentfieldtyp
-            unsplit === fieldtyp && continue
-            fields = @something fields copy(refined.fields)
-            fields[j] = unsplit
-        end
-        fields === nothing && continue
-        # keep the refinement even if no field type remains refined, since it may still
-        # refine whether the fields are defined
-        refinements[slot] = Core.PartialStruct(CC.fallback_lattice, refined.typ, CC._getundefs(refined), fields)
+        length(sigparts) == nparts && return nothing
     end
-    return nothing
-end
-else
-unsplit_field_refinements!(::Vector{Any}, ::Vector{CC.VarState}) = nothing
+    return sigparts
 end
 
 function after_abstract_invoke(
@@ -982,8 +864,8 @@ does not involve `Missing` and either:
   `getproperty` are kept, since they come from the fields of the analyzed objects, e.g.
   `r.flag` for `flag::Union{Missing,Bool}`.
 
-A speculative match also refines its argument slots, e.g. `x & 0x0f` refines `x::Any` to
-`Union{Missing,Integer}`, which [`unsplit_slot_refinements`](@ref) widens back to `Any`, so
+A speculative match would also refine its argument slots, e.g. `x & 0x0f` would refine
+`x::Any` to `Union{Missing,Integer}`, which [`CC.refinement_sigtype`](@ref) keeps `Any`, so
 that `x` is not reported as possibly `missing` afterwards.
 
 Other `missing` results, e.g. of a parser returning `missing` for invalid input, are kept
