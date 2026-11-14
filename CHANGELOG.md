@@ -55,6 +55,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed JETLS failing to precompile on Julia 1.14.0-beta1.
+  JETLS no longer runs on Julia 1.14 alpha releases; use 1.14.0-beta1 or later.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1056)
+
 - Fixed spurious [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) and [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error) diagnostics on a value whose type is not precisely known, such as an untyped argument, after it is passed to a function with a few methods, as if the value could be of any of the argument types of those methods.
   For example, the following no longer reports a `FieldError` for `Square`:
   ```julia
