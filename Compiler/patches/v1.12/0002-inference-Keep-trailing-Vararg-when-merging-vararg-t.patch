@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shuhei Kadowaki <40514306+aviatesk@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 18:23:31 +0900
+Subject: [PATCH] inference: Keep trailing `Vararg` when merging vararg-tuple
+ `PartialStruct`s (#63370)
+
+---
+ Compiler/src/typelimits.jl | 6 ++++++
+ Compiler/test/inference.jl | 7 +++++++
+ 2 files changed, 13 insertions(+)
+
+diff --git a/Compiler/src/typelimits.jl b/Compiler/src/typelimits.jl
+index dcb1f70e7c721f7a24ffb01a23bf7078289dd871..be140e6ad7bd70dbed399a9b74bb8964a6616d6a 100644
+--- a/Compiler/src/typelimits.jl
++++ b/Compiler/src/typelimits.jl
+@@ -604,6 +604,12 @@ end
+         fields = Vector{Any}(undef, nflds)
+         anyrefine = nflds > datatype_min_ninitialized(aty)
+         for i = 1:nflds
++            if i == nflds && isvatuple(aty)
++                # the trailing `Vararg` element carries no information beyond `aty` itself,
++                # so keep it as is
++                fields[i] = (unwrap_unionall(aty)::DataType).parameters[end]
++                continue # `undefs[i]` stays `nothing`
++            end
+             ai = getfield_tfunc(𝕃, typea, Const(i))
+             bi = getfield_tfunc(𝕃, typeb, Const(i))
+             ft = fieldtype(aty, i)
+diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
+index 51fb5718c078a65d26342e0434cb655587328997..2e41547f23dad2c147930aeec13a1632842f4c78 100644
+--- a/Compiler/test/inference.jl
++++ b/Compiler/test/inference.jl
+@@ -6357,3 +6357,10 @@ let
+     f() = 1; f(_, x...) = (0, f(x...))
+     @test f(1, 2, 3) == (0, (0, (0, 1)))
+ end
++
++# JuliaLang/julia#63351: merging vararg-tuple `PartialStruct`s must keep the trailing `Vararg`
++issue63351(c, xs) = c ? (1, :a, xs...) : (2, :a, xs...)
++@testset "tmerge of vararg-tuple `PartialStruct`s" begin
++    @test Base.infer_return_type(issue63351, (Bool, Vector{Any})) == Tuple{Int, Symbol, Vararg{Any}}
++    @test issue63351(true, Any[3]) === (1, :a, 3)
++end

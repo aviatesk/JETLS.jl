@@ -73,8 +73,7 @@ function get_document_symbols!(state::ServerState, uri::URI, fi::FileInfo)
             return cache, symbols
         end
         st0 = build_syntax_tree(fi)
-        pos = Position(; line=0, character=0)
-        (; context_module, world) = get_context_info(state, uri, pos)
+        (; context_module, world) = get_context_info(state, uri, nothing)
         symbols = extract_document_symbols(st0, fi, context_module, world)
         return DocumentSymbolCacheData(cache, cache_uri => symbols), symbols
     end

@@ -725,7 +725,40 @@ end
         return val
     end
     @test !occursin("llvm.julia.gc_preserve_begin", get_llvm(f8, Tuple{Some{Int}}, true, false, false))
+    # nor the stack slot of a split union whose unboxed members are pointer-free: only its box
+    function f9(i, s)
+        val = i == 0 ? s : i
+        GC.@preserve val begin end
+        return i
+    end
+    @test f9(1, "s") == 1
+    @test occursin(r"gc_preserve_begin\(ptr addrspace\(10\) %[^,()]+\)", get_llvm(f9, Tuple{Int, String}, true, false, false))
 end
+
+# GC.@preserve of a split union roots the references of its unboxed form,
+# whose box pointer is NULL at runtime
+mutable struct PreservedObj
+    x::Int
+end
+struct PreservedFields
+    o::PreservedObj
+    k::Int
+end
+const preserved_weakref = Ref{WeakRef}()
+@noinline function preserved_obj(i)
+    o = PreservedObj(i)
+    preserved_weakref[] = WeakRef(o)
+    return o
+end
+@noinline function preserve_union_phi(i, s)
+    u = i == 0 ? s : PreservedFields(preserved_obj(i), i) # ::Union{String, PreservedFields}
+    GC.@preserve u begin
+        GC.gc()
+        freed = preserved_weakref[].value === nothing
+    end
+    return freed
+end
+@test !preserve_union_phi(Base.inferencebarrier(1)::Int, "s")
 
 # issue #32843
 function f32843(vals0, v)
@@ -1332,25 +1365,6 @@ set_object_field_barrier(r, x) = (r[] = x; nothing)
     check_slots(get_llvm(set_object_field_barrier, Tuple{Base.RefValue{T},T}, true, false, false), 11)
 end
 
-# Cancellation-token clears and rebinds must barrier the slot before storing it.
-cancellation_binding_barrier(src) = Core.cancellation_point!(src)
-@testset "cancellation binding barriers" begin
-    ir = get_llvm(cancellation_binding_barrier, Tuple{Union{Nothing,Core.CancellationTokenSource}}, true, false, false)
-    lines = split(ir, '\n')
-    barriers = findall(line -> occursin("call void", line) && occursin("@julia.field_write_barrier.p11", line), lines)
-    @test length(barriers) == 2
-    casts = Dict(m.captures[1] => m.captures[2]
-                 for m in eachmatch(r"(%[^ ,]+) = addrspacecast ptr (%[^ ,]+) to ptr addrspace\(11\)", ir))
-    for i in barriers
-        operands = match(r"@julia.field_write_barrier.p11\(ptr addrspace\(10\) [^,]+, ptr addrspace\(11\) ([^,]+), ptr addrspace\(10\) (.*)\)", lines[i])
-        @test operands !== nothing
-        operands === nothing && continue
-        slot, child = operands.captures
-        destination = haskey(casts, slot) ? "ptr $(casts[slot])" : "ptr addrspace(11) $slot"
-        @test occursin("store atomic ptr addrspace(10) $child, $destination", lines[i + 1])
-    end
-end
-
 # Test phi node codegen for union types with inline roots
 function union_phi_inline_roots(x::Bool)
     if x
@@ -1573,4 +1587,38 @@ scale_forwarding!(b::ForwardingMatrix, a::ForwardingMatrix) = (b .= 2.0 .* a)
     if Sys.ARCH in (:x86_64, :aarch64)
         @test occursin(r"<\d+ x double>", get_llvm(scale_forwarding!, Tuple{ForwardingMatrix, ForwardingMatrix}))
     end
+end
+
+# A union phi whose incoming value is a singleton constant that the union stores unboxed
+# must not carry a box pointer (regression from #55045)
+struct UnionPhiStart end
+function union_phi_singleton(x::Vector{Int})
+    acc = UnionPhiStart()
+    for v in x
+        if isodd(v)
+            acc = acc isa UnionPhiStart ? v : acc + v
+        end
+    end
+    return acc
+end
+function union_phi_nothing(x::Vector{Int})
+    acc = nothing
+    for v in x
+        if isodd(v)
+            acc = acc === nothing ? v : acc + v
+        end
+    end
+    return acc
+end
+@testset "union phi with an unboxed singleton constant" begin
+    for f in (union_phi_singleton, union_phi_nothing)
+        @test !occursin("= phi ptr", get_llvm(f, Tuple{Vector{Int}}))
+    end
+    @test union_phi_singleton([2, 4]) === UnionPhiStart()
+    @test union_phi_singleton([1, 2, 3]) === 4
+    @test union_phi_nothing(Int[]) === nothing
+    @test union_phi_nothing([1, 2, 3]) === 4
+    # `Union{}` (typed `Type{Union{}}`) is an unboxed ghost of `TypeofBottom`
+    @test isequal(Base.mapany(identity, (Union{}, 'a')), Any[Union{}, 'a'])
+    @test isequal(Any[x for x in (Union{}, 1.0)], Any[Union{}, 1.0])
 end

@@ -265,7 +265,8 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
                             Any[Bottom for _ in 1:length(argtypes)])
                     end
                     for i = 1:length(argtypes)
-                        cnd = conditional_argtype(𝕃ᵢ, this_conditional, match.spec_types, argtypes, i)
+                        sigt = refinement_sigtype(interp, applicable, argtypes, state.inferidx, i)
+                        cnd = conditional_argtype(𝕃ᵢ, this_conditional, match.spec_types, argtypes, i, sigt)
                         conditionals[1][i] = conditionals[1][i] ⊔ᵢ cnd.thentype
                         conditionals[2][i] = conditionals[2][i] ⊔ᵢ cnd.elsetype
                     end
@@ -298,7 +299,7 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
             end
             local fargs = arginfo.fargs
             if sv isa InferenceState && fargs !== nothing
-                state.slotrefinements = collect_slot_refinements(𝕃ᵢ, applicable, argtypes, fargs, sv)
+                state.slotrefinements = collect_slot_refinements(interp, applicable, argtypes, fargs, sv)
             end
             state.rettype = from_interprocedural!(interp, state.rettype, sv, arginfo, state.conditionals)
             if widen_call_result(interp, si, state, sv)
@@ -573,8 +574,13 @@ function from_interconditional(𝕃ᵢ::AbstractLattice, @nospecialize(rt), sv::
     return widenconditional(rt)
 end
 
+refinement_sigtype(::AbstractInterpreter, applicable::Vector{MethodMatchTarget},
+                   ::Vector{Any}, j::Int, i::Int) =
+    fieldtype(applicable[j].match.spec_types, i)
+
 function conditional_argtype(𝕃ᵢ::AbstractLattice, @nospecialize(rt), @nospecialize(sig),
-                             argtypes::Vector{Any}, i::Int)
+                             argtypes::Vector{Any}, i::Int,
+                             @nospecialize(sigt = fieldtype(sig, i)))
     if isa(rt, InterConditional) && rt.slot == i
         return rt
     else
@@ -583,7 +589,7 @@ function conditional_argtype(𝕃ᵢ::AbstractLattice, @nospecialize(rt), @nospe
             @assert fieldcount(sig) == i
             argt = unwrapva(argt)
         end
-        thentype = elsetype = tmeet(𝕃ᵢ, argt, fieldtype(sig, i))
+        thentype = elsetype = tmeet(𝕃ᵢ, argt, sigt)
         condval = maybe_extract_const_bool(rt)
         condval === true && (elsetype = Bottom)
         condval === false && (thentype = Bottom)
@@ -591,8 +597,9 @@ function conditional_argtype(𝕃ᵢ::AbstractLattice, @nospecialize(rt), @nospe
     end
 end
 
-function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{MethodMatchTarget},
+function collect_slot_refinements(interp::AbstractInterpreter, applicable::Vector{MethodMatchTarget},
     argtypes::Vector{Any}, fargs::Vector{Any}, sv::InferenceState)
+    𝕃ᵢ = typeinf_lattice(interp)
     ⊏, ⊔ = strictpartialorder(𝕃ᵢ), join(𝕃ᵢ)
     slotrefinements = nothing
     for i = 1:length(fargs)
@@ -607,7 +614,7 @@ function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{M
             for j = 1:length(applicable)
                 (;match) = applicable[j]
                 valid_as_lattice(match.spec_types, true) || continue
-                sigt = sigt ⊔ fieldtype(match.spec_types, i)
+                sigt = sigt ⊔ refinement_sigtype(interp, applicable, argtypes, j, i)
             end
             if sigt ⊏ argt # i.e. signature type is strictly more specific than the type of the argument slot
                 if slotrefinements === nothing
@@ -943,7 +950,9 @@ function abstract_call_method_with_const_args(interp::AbstractInterpreter,
     # try constant prop'
     new_result = const_prop_call(interp, mi, result, arginfo, sv, concrete_eval_result)
     new_result === nothing && return nothing
-    if eligibility === :none
+    # running a call that never returns gains nothing, and if it also cannot throw,
+    # its code is unreachable and may be undefined behavior
+    if eligibility === :none && new_result.rt !== Bottom
         # const-prop' may have refined effects to be foldable when the original
         # call was not; in that case, prefer concrete eval over the const-prop' result
         new_eligibility = _concrete_eval_eligible(
@@ -1098,8 +1107,15 @@ function _concrete_eval_call(
         concrete_result = ConcreteResult(edge, effects)
         return ConstCallResult(Bottom, Any, concrete_result, effects, #=const_edge=#nothing)
     end
-    concrete_result = ConcreteResult(edge, EFFECTS_TOTAL, value)
-    return ConstCallResult(Const(value), Bottom, concrete_result, EFFECTS_TOTAL, #=const_edge=#nothing)
+    rt = Const(value)
+    # A non-mutation-free value obtained by concrete evaluation may refer to global
+    # memory (e.g. a const global `Ref`), so preserve the `:inaccessiblememonly` taint
+    # of the call: otherwise the caller may access the value's memory and still be
+    # refined to be `:inaccessiblememonly` (and thus `:consistent`)
+    concrete_effects = is_mutation_free_argtype(rt) ? EFFECTS_TOTAL :
+        Effects(EFFECTS_TOTAL; inaccessiblememonly=effects.inaccessiblememonly)
+    concrete_result = ConcreteResult(edge, concrete_effects, value)
+    return ConstCallResult(rt, Bottom, concrete_result, concrete_effects, #=const_edge=#nothing)
 end
 
 # check if there is a cycle and duplicated inference of `mi`

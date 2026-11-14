@@ -377,10 +377,11 @@ end
 is_synchronized(s::ServerState, uri::URI) = haskey(load(s.file_cache), uri)
 
 """
-    get_context_info(state::ServerState, uri::URI, pos::Position) ->
+    get_context_info(state::ServerState, uri::URI, pos::Union{Nothing,Position}) ->
         (; context_module, world, analyzer, postprocessor)
 
-Extract context information for a given position in a file.
+Extract context information for a given position in a file, or for the top level of the
+file, outside any `module` block, when `pos` is `nothing`.
 
 Returns a named tuple containing:
 - `context_module::Module`: The module context at the given position
@@ -393,7 +394,9 @@ Returns a named tuple containing:
 - `postprocessor::JET.PostProcessor`: The post-processor for fixing `var"..."` strings that users don't need
   to recognize, which are caused by JET implementation details
 """
-function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_func=nothing)
+function get_context_info(
+        state::ServerState, uri::URI, pos::Union{Nothing,Position}; lookup_func=nothing
+    )
     lookup_uri = canonical_cache_uri(state, uri)
     if lookup_func !== nothing
         analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
@@ -407,22 +410,35 @@ function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_fu
     return (; context_module, world, analyzer, postprocessor)
 end
 
-get_context_module(::Nothing, ::URI, ::Position) = FallbackAnalysisContext
+get_context_module(::Nothing, ::URI, ::Union{Nothing,Position}) = FallbackAnalysisContext
 # Use `@something` instead of `something` due to https://github.com/JuliaLang/julia/pull/60857
 # `something` can be used after 1.12.5
-get_context_module(oos::OutOfScope, ::URI, ::Position) =
+get_context_module(oos::OutOfScope, ::URI, ::Union{Nothing,Position}) =
     something(oos.module_context, FallbackAnalysisContext)
-function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Position)
+function get_context_module(
+        analysis_result::AnalysisResult, uri::URI, pos::Union{Nothing,Position}
+    )
     _has_analyzed_context(analysis_result, uri) || return FallbackAnalysisContext
     safi = analyzed_file_info(analysis_result, uri)::JET.AnalyzedFileInfo
-    curline = Int(pos.line) + 1
     curmod = Main
-    currange = 0:typemax(Int)
-    for (range, mod) in safi.module_range_infos
-        curline in range || continue
-        if range ⊆ currange
-            curmod = mod
-            currange = range
+    if pos === nothing
+        # the range of the top level of the file contains the ranges of the modules in it
+        currange = 1:0
+        for (range, mod) in safi.module_range_infos
+            if currange ⊆ range
+                curmod = mod
+                currange = range
+            end
+        end
+    else
+        curline = Int(pos.line) + 1
+        currange = 0:typemax(Int)
+        for (range, mod) in safi.module_range_infos
+            curline in range || continue
+            if range ⊆ currange
+                curmod = mod
+                currange = range
+            end
         end
     end
     return curmod

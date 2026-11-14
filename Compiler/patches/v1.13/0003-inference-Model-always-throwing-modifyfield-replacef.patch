@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shuhei Kadowaki <40514306+aviatesk@users.noreply.github.com>
+Date: Wed, 1 Jul 2026 10:46:04 +0900
+Subject: [PATCH] inference: Model always-throwing
+ `modifyfield!`/`replacefield!` as `Bottom` (#62235)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`setfield!_tfunc`, `swapfield!_tfunc` and `setfieldonce!_tfunc` already
+return `Bottom` when the targeted field can never be written, namely a
+`const` field or a field of an immutable type, since the underlying
+store always throws. `modifyfield!_tfunc` and `replacefield!_tfunc` did
+not perform that check and instead reported a `Pair`/cmpswap result
+type, so an operation that can only ever throw was not recognized as
+such.
+
+Guard both tfuncs through `setfield!_tfunc`. `modifyfield!` stores
+`op(o.f, v)` rather than `v`, so the simple tfunc only consults field
+writability (passing `Any` as the value; the result is refined precisely
+in `abstract_modifyop!`, the direct-call path that derives its return
+type from `modifyfield!_tfunc`). `replacefield!` type-checks the
+replacement `v` before the comparison and therefore throws even when the
+comparison would have failed, so `v` is consulted as well — this also
+models a replacement value that can never be stored into the field.
+
+Co-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ Compiler/src/tfuncs.jl     |  6 ++++++
+ Compiler/test/inference.jl | 31 +++++++++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+)
+
+diff --git a/Compiler/src/tfuncs.jl b/Compiler/src/tfuncs.jl
+index 39b33a1dc494dbd8d43f709be9496838418ce9c1..bf6ad77ad9b2a07147e41be89c65a9b5e6f1748c 100644
+--- a/Compiler/src/tfuncs.jl
++++ b/Compiler/src/tfuncs.jl
+@@ -1356,6 +1356,8 @@ end
+     return getfield_tfunc(𝕃, o, f)
+ end
+ @nospecs function modifyfield!_tfunc(𝕃::AbstractLattice, o, f, op, v, order=Symbol)
++    # the stored value is `op(o.f, v)`, so check only that `o.f` is writable at all
++    setfield!_tfunc(𝕃, o, f, Any) === Bottom && return Bottom
+     o′ = widenconst(o)
+     T = _fieldtype_tfunc(𝕃, o′, f, isconcretetype(o′))
+     T === Bottom && return Bottom
+@@ -1363,6 +1365,10 @@ end
+     return instanceof_tfunc(apply_type_tfunc(𝕃, Any[PT, T, T]), true)[1]
+ end
+ @nospecs function replacefield!_tfunc(𝕃::AbstractLattice, o, f, x, v, success_order=Symbol, failure_order=Symbol)
++    # `replacefield!` type-checks the replacement `v` before the comparison, so a
++    # non-writable field or a `v` that cannot be stored always throws (even when the
++    # comparison would have failed)
++    setfield!_tfunc(𝕃, o, f, v) === Bottom && return Bottom
+     o′ = widenconst(o)
+     T = _fieldtype_tfunc(𝕃, o′, f, isconcretetype(o′))
+     T === Bottom && return Bottom
+diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
+index 95e109b5cd02612dfd8c7c15900b07a30dd1a6da..9f4521108429760ca3dd8276ff8b7c75f4f3c31b 100644
+--- a/Compiler/test/inference.jl
++++ b/Compiler/test/inference.jl
+@@ -1883,6 +1883,37 @@ let setfield!_nothrow(@nospecialize xs...) =
+     @test !setfield!_nothrow(Any, Any, Int)
+ end
+ 
++mutable struct AtomicFields
++    @atomic a::Int
++    b::Int
++    const c::Int
++end
++let modifyfield!_tfunc(@nospecialize xs...) =
++        Compiler.modifyfield!_tfunc(Compiler.fallback_lattice, xs...)
++    replacefield!_tfunc(@nospecialize xs...) =
++        Compiler.replacefield!_tfunc(Compiler.fallback_lattice, xs...)
++    cmpswap_Int = ccall(:jl_apply_cmpswap_type, Any, (Any,), Int)
++    # writable fields (`@atomic` and plain) of a mutable struct
++    @test modifyfield!_tfunc(AtomicFields, Const(:a), Any, Any) === Pair{Int,Int}
++    @test replacefield!_tfunc(AtomicFields, Const(:a), Int, Int) === cmpswap_Int
++    @test modifyfield!_tfunc(AtomicFields, Const(:b), Any, Any) === Pair{Int,Int}
++    @test replacefield!_tfunc(AtomicFields, Const(:b), Int, Int) === cmpswap_Int
++    # `replacefield!` type-checks the replacement value unconditionally, so a value that
++    # can never be stored always throws
++    @test replacefield!_tfunc(AtomicFields, Const(:a), Int, String) === Union{}
++    @test replacefield!_tfunc(AtomicFields, Const(:b), Int, String) === Union{}
++    # `const` fields can never be written, so the operation always throws
++    @test modifyfield!_tfunc(AtomicFields, Const(:c), Any, Any) === Union{}
++    @test modifyfield!_tfunc(AtomicFields, Const(3), Any, Any) === Union{}
++    @test replacefield!_tfunc(AtomicFields, Const(:c), Int, Int) === Union{}
++    @test replacefield!_tfunc(AtomicFields, Const(3), Int, Int) === Union{}
++    # immutable types can never be written, so the operation always throws
++    @test modifyfield!_tfunc(Some{Int}, Const(:value), Any, Any) === Union{}
++    @test replacefield!_tfunc(Some{Int}, Const(:value), Int, Int) === Union{}
++    @test modifyfield!_tfunc(Some, Const(:value), Any, Any) === Union{}
++    @test replacefield!_tfunc(Some, Const(:value), Any, Any) === Union{}
++end
++
+ struct Foo_22708
+     x::Ptr{Foo_22708}
+ end

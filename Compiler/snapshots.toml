@@ -3,25 +3,29 @@ repository = "https://github.com/JuliaLang/julia.git"
 subdir = "Compiler"
 
 [snapshots."1.12"]
-commit = "259e20d3b4dfee88e061dbc4fc14f924c0c7d746"
-source-branch = "avi/JETLS-Compiler-head-v1.12-2026-10-23"
+base = "dc186b6f204c3b7c553abf4483fd29665a442c4e"
+base-branch = "release-1.12"
+patches = "patches/v1.12"
 runtime = { lower = "1.12.2", upper = "1.13-" }
 destination = "snapshots/v1.12"
 
 [snapshots."1.13"]
-commit = "d5005548654c1f009162506a0b6206414d909480"
-source-branch = "avi/JETLS-Compiler-head-v1.13-2026-11-01"
+base = "c1ac32ab73354bbe9bb767f91e0a2b857141fe70"
+base-branch = "release-1.13"
+patches = "patches/v1.13"
 runtime = { lower = "1.13-", upper = "1.14-" }
 destination = "snapshots/v1.13"
 
 [snapshots."1.14"]
-commit = "11740742340c41fbf24c7ba4838ba068c725e636"
-source-branch = "avi/JETLS-Compiler-head-v1.14-2026-11-04"
+base = "a29842ef00fe990511eaf7c64ab6d4f4ba81323d"
+base-branch = "release-1.14"
+patches = "patches/v1.14"
 runtime = { lower = "1.14-", upper = "1.15-" }
 destination = "snapshots/v1.14"
 
 [snapshots."1.15"]
-commit = "27a1916f837447c0456a539d64398499c101bf8e"
-source-branch = "avi/JETLS-Compiler-head-v1.15-2026-11-04"
+base = "5c0cda0f29114126a414c986ed5e7729c43fd28e"
+base-branch = "master"
+patches = "patches/v1.15"
 runtime = { lower = "1.15-", upper = "1.16-" }
 destination = "snapshots/v1.15"

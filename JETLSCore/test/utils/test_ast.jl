@@ -18,6 +18,9 @@ module same_named_macro_context
 macro inline(ex)
     return esc(ex)
 end
+macro lazy_str(str)
+    return str
+end
 end
 
 module nested_same_named_macro_context
@@ -564,6 +567,86 @@ end
             return nothing
         end
         @test macrocalls == expected_macrocalls
+    end
+end
+
+@testset "`remove_macrocalls` replaces literals with unparsed interpolations" begin
+    world = Base.get_world_counter()
+    for code in ("`echo hello`", "`echo '\$xxx' \\\$xxx`", "lazy\"hello\"")
+        st0 = jlparse(code; rule=:statement)
+        @test JETLSCore.remove_macrocalls(@__MODULE__, world, st0) === st0
+    end
+
+    for code in (
+            "`echo \$key --flag=\$(key) \"quoted \$key\" '\$xxx'`",
+            "`echo \$(key...)`",
+            "```\n    echo\n        \$key\n    ```",
+            "```echo \$(read(`git log \$key`, String))```",
+            # nested cmd literals that are not written as they are parsed
+            "`echo \$(\\`echo \$key\\`)`",
+            "`echo \$(\\`echo \$(\\\\\\`echo \$key\\\\\\`)\\`)`",
+            join((
+                "```",
+                "    echo \$(read(`git log \\",
+                "        --format=\$key`, String))",
+                "    ```",
+            ), '\n'),
+            # in the arguments of macro calls
+            "`echo \$(@time(string(key)))`",
+            join((
+                "```",
+                "    echo \$(read(@static(Sys.isunix() ?",
+                "        `git log \\",
+                "            --format=\$key` : `cmd /c echo fallback`), String))",
+                "    ```",
+            ), '\n'),
+            "lazy\"value \$key and \$(key...)\"",
+            "lazy\"\"\"\n    value\n        \$key\n    \"\"\"",
+            # dedented by less than the indentation of the last line
+            "lazy\"\"\"value\n    \$key\"\"\"",
+            "lazy\"\"\"\n    value\n  \$key\n      \"\"\"",
+            "lazy\"\"\"\r\n    value\r\n    \$key\r\n    \"\"\"",
+            "lazy\"value\\\\\\\"\$key\"",
+            "Base.lazy\"value \$key\"",
+            "lazy\"value \$key\"c",
+            # nested literals
+            "lazy\"value \$(lazy\\\"nested \$key\\\")\"",
+            "lazy\"value \$(`echo \$key`)\"",
+            "`echo \$(lazy\"value \$key\")`",
+            "lazy\"value \$(@time(string(key)))\"",
+        )
+        st0 = jlparse(code; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(@__MODULE__, world, st0)
+        ranges = UnitRange{Int}[]
+        JETLSCore.traverse(transformed) do node::SyntaxTree
+            if JS.head(node) === :identifier && JETLSCore.get_name_val(node) == "key"
+                push!(ranges, JS.byte_range(node))
+            end
+            return nothing
+        end
+        @test ranges == findall("key", code)
+    end
+
+    # The string of an explicit `@lazy_str` call is escaped differently, and the string
+    # macro of another module may not interpolate
+    for (context_module, code) in (
+            (@__MODULE__, "@lazy_str \"value \\\$key\""),
+            (same_named_macro_context, "lazy\"value \$key\""))
+        st0 = jlparse(code; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(context_module, world, st0)
+        @test JS.head(transformed) === :block
+        @test all(JS.is_leaf, JS.children(transformed))
+    end
+
+    let st0 = jlparse("`echo \$(@time(xxx)) \$(@inline(yyy))`"; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(@__MODULE__, world, st0)
+        macrocalls = String[]
+        JETLSCore.traverse(transformed) do node::SyntaxTree
+            JS.head(node) === :macrocall || return nothing
+            push!(macrocalls, JS.sourcetext(node[1]))
+            return nothing
+        end
+        @test macrocalls == ["@inline"]
     end
 end
 
