@@ -97,6 +97,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed rename being offered with the cursor on a command literal or on an integer literal beyond `Int64`, where it replaced every such literal with the new name.
   Such a literal as a whole is no longer a target of rename, find-references, document-highlight, hover, or go-to-definition.
 
+- Fixed identifiers interpolated into `lazy"..."` strings being mislocated in some forms, where find-references and document-highlight pointed at other parts of the string or of the file, and rename edited those.
+  This happened in triple-quoted strings whose closing `"""` is on a line with content or is indented deeper than the content, with CRLF line endings, after backslashes before an escaped quote, and for names within a macro call in an interpolation, such as `n` in `lazy"$(@time(string(n)))"`.
+
 ## 2026-11-04
 
 - Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)

@@ -1163,6 +1163,54 @@ end
         end
     end
 
+    @testset "lazy string interpolation" begin
+        for code in (
+                """
+                function func(│aaa│)
+                    return lazy"value: \$│aaa│ \$(│aaa│ + 1)"
+                end
+                """,
+                # dedented by less than the indentation of the last line
+                """
+                function func(│aaa│)
+                    return lazy\"\"\"value:
+                        \$│aaa│ \$(│aaa│ + 1)\"\"\"
+                end
+                """,
+                # macro calls in the interpolations are removed as well, even undefined ones
+                """
+                function func(│aaa│)
+                    return lazy"value: \$(@time(string(│aaa│))) \$(@undefinedmacro(│aaa│))"
+                end
+                """,
+            )
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
+            @test length(positions) == 6
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 3
+                for i = 1:2:5
+                    @test any(refs) do ref
+                        ref.range.start == positions[i] && ref.range.var"end" == positions[i+1]
+                    end
+                end
+            end
+        end
+        # The interpolations in the string of an explicit `@lazy_str` call are not located,
+        # so they must not be reported with the range of the string.
+        let code = """
+            function func(│aaa│)
+                return @lazy_str "value: \\\$aaa"
+            end
+            """
+            clean_code, positions = JETLSCore.get_text_and_positions(code)
+            @test length(positions) == 2
+            refs = find_references(clean_code, positions[1])
+            @test length(refs) == 1
+            @test only(refs).range == Range(; start=positions[1], var"end"=positions[2])
+        end
+    end
+
     # `@ccall foo(...)` treats `foo` as a C library symbol, not a reference to
     # a Julia binding. `@ccall` has a new-style JuliaLowering implementation
     # that correctly encodes this by wrapping `foo` in `:inert`, so scope
