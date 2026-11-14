@@ -677,8 +677,8 @@ function _cmd_source_map(value::String, raw::String)
     afteridx = firstindex(raw)
     for tc in TokenCursor(stream)
         (JS.kind(tc) === JS.K"CmdString" && !JS.is_trivia(this(tc))) || continue
-        _cmd_unescape_chunk!(
-            source_map, value, raw, JS.first_byte(tc), JS.last_byte(tc)) || return nothing
+        _cmd_unescape_chunk!(source_map, value, raw, JS.first_byte(tc), JS.last_byte(tc)) ||
+            return nothing
         afteridx = JS.last_byte(tc) + 1
     end
     length(source_map) == ncodeunits(value) || return nothing
@@ -710,8 +710,7 @@ function _cmd_unescape_chunk!(
         # Backslashes before a backtick or the end of the chunk are themselves escaped
         escaped = j > stopidx || buf[j] == UInt8('`')
         for k = 0:(escaped ? nbackslash ÷ 2 : nbackslash)-1
-            _cmd_push_source!(
-                source_map, value, UInt8('\\'), escaped ? i + 2k : i + k) || return false
+            _cmd_push_source!(source_map, value, UInt8('\\'), escaped ? i + 2k : i + k) || return false
         end
         if j <= stopidx
             # An escaped backtick begins at its backslash
@@ -742,8 +741,7 @@ function _cmd_source(
     src = BS.sourceref(text)
     src isa BS.SourceRef || return text
     afteridx = nextind(value, thisind(value, stopbyte))
-    return BS.SourceRef(src.code,
-        UInt32(source_map[startidx]), UInt32(source_map[afteridx] - 1))
+    return BS.SourceRef(src.code, UInt32(source_map[startidx]), UInt32(source_map[afteridx] - 1))
 end
 
 # The interpolations of the command `value` of the cmd literal with the string `text`,

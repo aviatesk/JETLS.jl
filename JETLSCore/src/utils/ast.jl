@@ -485,8 +485,7 @@ function _remove_macrocalls(
             push!(new_children, st0[1])
             changed = false
             for i = 2:JS.numchildren(st0)
-                child, child_changed = _remove_macrocalls(
-                    context_module, world, st0[i]; strip_static)
+                child, child_changed = _remove_macrocalls(context_module, world, st0[i]; strip_static)
                 changed |= child_changed
                 push!(new_children, child)
             end
@@ -497,8 +496,7 @@ function _remove_macrocalls(
             return st0, false
         elseif is_cmd0(st0)
             stripped = @something strip_cmd_literal(st0) return st0, false
-            return first(_remove_macrocalls(
-                context_module, world, stripped; strip_static)), true
+            return first(_remove_macrocalls(context_module, world, stripped; strip_static)), true
         end
         new_children = SyntaxList()
         for i = 2:JS.numchildren(st0)
@@ -509,8 +507,7 @@ function _remove_macrocalls(
             # arguments out of the macrocall into a bare `block`, any surviving
             # `$` would be out of context and fail lowering, so unwrap
             # interpolations on the lifted child.
-            stripped, _ = _remove_macrocalls(
-                context_module, world, st0[i]; strip_static)
+            stripped, _ = _remove_macrocalls(context_module, world, st0[i]; strip_static)
             push!(new_children, _unwrap_interpolations(stripped)[1])
         end
         return JL.@ast(_, st0, [:block new_children...]), true
