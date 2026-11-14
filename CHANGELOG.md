@@ -70,8 +70,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
-- Fixed identifiers interpolated into the docstring of a module being resolved outside the module, although the docstring is evaluated within the module.
-  Names defined or imported in the module are no longer falsely reported by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) and [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import), names defined only outside the module are now reported, and hover, go-to-definition, and other features now resolve them within the module:
+- Fixed identifiers interpolated into the docstring of a module being resolved outside the module rather than within it, which falsely reported the names of the module by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) and [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import):
   ```julia
   """
   $(EXPORTS)
