@@ -37,10 +37,10 @@ abort that lowering and take every lowering-based analysis (undef-var, reference
 [`TypeAnnotation`](@ref) for hover / inlay / signature-help, …) for the whole
 enclosing form down with it.
 
-| helper                        | when                                                  |
-|:------------------------------|:------------------------------------------------------|
-| [`push_macro_error!`](@ref)   | Base also rejects                                     |
-| [`push_macro_warning!`](@ref) | Base accepts silently or only emits `depwarn`         |
+| helper                        | when                                          |
+|:------------------------------|:----------------------------------------------|
+| [`push_macro_error!`](@ref)   | Base also rejects                             |
+| [`push_macro_warning!`](@ref) | Base accepts silently or only emits `depwarn` |
 
 Common recovery shapes:
 
