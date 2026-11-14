@@ -7,3 +7,6 @@ JuliaSyntaxHighlighting = "ac6e5ff7-fb65-4e79-a425-ec3bc9c03011"
 [sources]
 JETLS = {path = ".."}
 JETLSCore = {path = "../JETLSCore"}
+
+[compat]
+Documenter = "1.20"
