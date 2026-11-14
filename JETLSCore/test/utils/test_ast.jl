@@ -567,6 +567,61 @@ end
     end
 end
 
+@testset "`remove_macrocalls` replaces cmd literals" begin
+    world = Base.get_world_counter()
+    for code in ("`echo hello`", "`echo '\$xxx' \\\$xxx`")
+        st0 = jlparse(code; rule=:statement)
+        @test JETLSCore.remove_macrocalls(@__MODULE__, world, st0) === st0
+    end
+
+    for code in (
+            "`echo \$key --flag=\$(key) \"quoted \$key\" '\$xxx'`",
+            "`echo \$(key...)`",
+            "```\n    echo\n        \$key\n    ```",
+            "```echo \$(read(`git log \$key`, String))```",
+            # nested cmd literals that are not written as they are parsed
+            "`echo \$(\\`echo \$key\\`)`",
+            "`echo \$(\\`echo \$(\\\\\\`echo \$key\\\\\\`)\\`)`",
+            join((
+                "```",
+                "    echo \$(read(`git log \\",
+                "        --format=\$key`, String))",
+                "    ```",
+            ), '\n'),
+            # in the arguments of macro calls
+            "`echo \$(@time(string(key)))`",
+            join((
+                "```",
+                "    echo \$(read(@static(Sys.isunix() ?",
+                "        `git log \\",
+                "            --format=\$key` : `cmd /c echo fallback`), String))",
+                "    ```",
+            ), '\n'),
+        )
+        st0 = jlparse(code; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(@__MODULE__, world, st0)
+        ranges = UnitRange{Int}[]
+        JETLSCore.traverse(transformed) do node::SyntaxTree
+            if JS.head(node) === :identifier && JETLSCore.get_name_val(node) == "key"
+                push!(ranges, JS.byte_range(node))
+            end
+            return nothing
+        end
+        @test ranges == findall("key", code)
+    end
+
+    let st0 = jlparse("`echo \$(@time(xxx)) \$(@inline(yyy))`"; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(@__MODULE__, world, st0)
+        macrocalls = String[]
+        JETLSCore.traverse(transformed) do node::SyntaxTree
+            JS.head(node) === :macrocall || return nothing
+            push!(macrocalls, JS.sourcetext(node[1]))
+            return nothing
+        end
+        @test macrocalls == ["@inline"]
+    end
+end
+
 select_target_identifier(code::AbstractString, pos::Int) = JETLSCore.select_target_identifier(jlparse(code), pos)
 function get_target_identifier(code::AbstractString; kwargs...)
     clean_code, positions = JETLSCore.get_text_and_positions(code; kwargs...)
