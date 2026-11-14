@@ -52,10 +52,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  2 files changed, 31 insertions(+), 1 deletion(-)
 
 diff --git a/Compiler/src/tfuncs.jl b/Compiler/src/tfuncs.jl
-index fde64c3032ff80d54bde9d108a997b67b4565c15..aa2bf6ea755bca464c79691e2e24fff3d1d151d2 100644
+index b7562fb291aa484b01a90521a4d4f2ef05f26ccc..6289543377c263e70e1e981c8eaa3dfa58bd3f2e 100644
 --- a/Compiler/src/tfuncs.jl
 +++ b/Compiler/src/tfuncs.jl
-@@ -3724,7 +3724,19 @@ function return_type_tfunc(interp::AbstractInterpreter, argtypes::Vector{Any}, s
+@@ -3725,7 +3725,19 @@ function return_type_tfunc(interp::AbstractInterpreter, argtypes::Vector{Any}, s
              return CallMeta(Const(typeof(rt.val)), Union{}, RT_CALL_EFFECTS, info)
          end
          rt = widenconst(rt)
@@ -77,10 +77,10 @@ index fde64c3032ff80d54bde9d108a997b67b4565c15..aa2bf6ea755bca464c79691e2e24fff3
              return CallMeta(Const(rt), Union{}, RT_CALL_EFFECTS, info)
          elseif isa(sv, InferenceState) && !isempty(sv.pclimitations)
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index 84178fe1b637e9de50e91ef3e59ac9f371037612..c70aaf6f9ab1e2749887eca6b4f49f952bb20513 100644
+index 600408ee526ca9b3994a0e5f40a9290dbd2725bd..29c9a0f8992c292fdaf8e5b4181ac34d2abeb946 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
-@@ -8641,6 +8641,24 @@ end == Type
+@@ -8655,6 +8655,24 @@ end == Type
      Compiler.return_type(Tuple)
  end == Type
  

@@ -92,15 +92,6 @@ function multiple_methods(m::UnionSplitMethodMatches)
     return false
 end
 
-nmatches(info::MethodMatchInfo) = length(info.results)
-function nmatches(info::UnionSplitInfo)
-    n = 0
-    for mminfo in info.split
-        n += nmatches(mminfo)
-    end
-    return n
-end
-
 # intermediate state for computing gfresult
 mutable struct CallInferenceState
     inferidx::Int
@@ -3474,6 +3465,8 @@ function abstract_eval_new(interp::AbstractInterpreter, e::Expr, sstate::Stateme
     argtype = abstract_eval_value(interp, e.args[1], sstate, sv)
     rt, _... = instanceof_tfunc(argtype, true)
     ut = unwrap_unionall(rt)
+    # only the runtime may allocate such a type (see `check_new_struct_type`)
+    isa(ut, DataType) && datatype_hashiddenfields(ut) && return RTEffects(Bottom, ErrorException, EFFECTS_THROWS)
     exct = Union{ErrorException,TypeError}
     if isa(ut, DataType) && !isabstracttype(ut)
         ismutable = ismutabletype(ut)
@@ -3575,6 +3568,9 @@ function abstract_eval_splatnew(interp::AbstractInterpreter, e::Expr, sstate::St
     𝕃ᵢ = typeinf_lattice(interp)
     argtype = abstract_eval_value(interp, e.args[1], sstate, sv)
     rt, isexact = instanceof_tfunc(argtype, true)
+    ut = unwrap_unionall(rt)
+    # only the runtime may allocate such a type (see `check_new_struct_type`)
+    isa(ut, DataType) && datatype_hashiddenfields(ut) && return RTEffects(Bottom, ErrorException, EFFECTS_THROWS)
     # `:splatnew` throws on a `UnionAll` or `Union` rep that is only `==` to `rt` (#61323)
     isexact = isexact && widenconst(argtype) <: DataType
     nothrow = false

@@ -13,10 +13,10 @@ without needing complex lattice element merging.
  2 files changed, 6 insertions(+)
 
 diff --git a/Compiler/src/abstractinterpretation.jl b/Compiler/src/abstractinterpretation.jl
-index 7a84c999953868a572c5c0f2b39f6e6b1341f980..cd7fd264970f9a9ae33ddc025ac9575000960163 100644
+index 5b55fd895fdcab425a37320c10d1dd3b63aef751..4ded011962c2c171b12b1cdd271ba68933d2e801 100644
 --- a/Compiler/src/abstractinterpretation.jl
 +++ b/Compiler/src/abstractinterpretation.jl
-@@ -4267,6 +4267,7 @@ end
+@@ -4276,6 +4276,7 @@ end
  function update_exc_bestguess!(interp::AbstractInterpreter, @nospecialize(exct), frame::InferenceState)
      𝕃ₚ = ipo_lattice(interp)
      handler = gethandler(frame)

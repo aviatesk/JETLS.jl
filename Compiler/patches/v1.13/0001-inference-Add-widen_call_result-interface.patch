@@ -29,7 +29,7 @@ by overloading this method without forking the call inference pipeline.
  2 files changed, 23 insertions(+), 8 deletions(-)
 
 diff --git a/Compiler/src/abstractinterpretation.jl b/Compiler/src/abstractinterpretation.jl
-index 018c1954334cd22d37bc7e4ab6e5860c393684b5..7a84c999953868a572c5c0f2b39f6e6b1341f980 100644
+index 7bd3f915fd5a1f6adab827ab164f157652821a23..5b55fd895fdcab425a37320c10d1dd3b63aef751 100644
 --- a/Compiler/src/abstractinterpretation.jl
 +++ b/Compiler/src/abstractinterpretation.jl
 @@ -119,6 +119,9 @@ mutable struct CallInferenceState

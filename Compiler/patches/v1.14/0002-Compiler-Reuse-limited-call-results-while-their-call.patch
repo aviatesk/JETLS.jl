@@ -51,7 +51,7 @@ Assisted-by: Claude Code (Opus 5.5)
  4 files changed, 178 insertions(+), 1 deletion(-)
 
 diff --git a/Compiler/src/inferencestate.jl b/Compiler/src/inferencestate.jl
-index 00b8d41a22817b9132b74be1a392ff923a90bc99..948d5cd0280c416d9ccaab17bc2315c2857aeb5d 100644
+index 179a84e2abe8f87a25f15af73d8703d5ac2fddec..20423f9e71c677e8c4359c83975c8afc46076f47 100644
 --- a/Compiler/src/inferencestate.jl
 +++ b/Compiler/src/inferencestate.jl
 @@ -320,6 +320,8 @@ mutable struct InferenceState{I<:AbstractInterpreter}
@@ -82,10 +82,10 @@ index 00b8d41a22817b9132b74be1a392ff923a90bc99..948d5cd0280c416d9ccaab17bc2315c2
              _time_ns(), 0.0, 0, 0,
              restrict_abstract_call_sites, cache_mode, insert_coverage,
 diff --git a/Compiler/src/typeinfer.jl b/Compiler/src/typeinfer.jl
-index 1374f203a45ccc53d2e09e9212b8d8b693ef3a93..faf496d8d07aaea11facf38f93d17dbddb273c1d 100644
+index 0da7807fecf167cb5d497103a689c5c1be48c0c8..da72b97c577c4d9513637a02f5e6876aacdddf3e 100644
 --- a/Compiler/src/typeinfer.jl
 +++ b/Compiler/src/typeinfer.jl
-@@ -1258,6 +1258,91 @@ function return_cached_result(interp::AbstractInterpreter, method::Method,
+@@ -1285,6 +1285,91 @@ function return_cached_result(interp::AbstractInterpreter, method::Method,
          codeinst, edgecycle, edgelimited, edgerecursed, local_result))
  end
  
@@ -177,7 +177,7 @@ index 1374f203a45ccc53d2e09e9212b8d8b693ef3a93..faf496d8d07aaea11facf38f93d17dbd
  function lookup_cached_edge(interp::AbstractInterpreter, method::Method,
                              mi::MethodInstance, caller::AbsIntState, force_inline::Bool,
                              edgecycle::Bool, edgelimited::Bool, edgerecursed::Bool)
-@@ -1364,6 +1449,7 @@ function _schedule_edge_infer_task!(caller::AbsIntState, frame::InferenceState,
+@@ -1391,6 +1476,7 @@ function _schedule_edge_infer_task!(caller::AbsIntState, frame::InferenceState,
                      Core.svec(internal_result_edges(frame)...))
                  add_inference_proof!(caller.edges, proof)
                  update_valid_age!(caller, get_inference_world(interp), proof_worlds(proof))
@@ -185,7 +185,7 @@ index 1374f203a45ccc53d2e09e9212b8d8b693ef3a93..faf496d8d07aaea11facf38f93d17dbd
              end
              effects = result.ipo_effects # effects are adjusted already within `finish` for ipo_effects
              if !iszero(frame.cache_mode & CACHE_MODE_GLOBAL) && isdefined(result, :ci)
-@@ -1438,6 +1524,11 @@ function typeinf_edge(interp::AbstractInterpreter, method::Method, @nospecialize
+@@ -1465,6 +1551,11 @@ function typeinf_edge(interp::AbstractInterpreter, method::Method, @nospecialize
          frame = resolve_call_cycle!(interp, mi, caller)
      end
      if frame === false
@@ -227,7 +227,7 @@ index b733688691b88d1d5482dab7861af45263919ad9..3760dde2dd915b9ef8ab092881a93644
  function InferenceResult(mi::MethodInstance, 𝕃::AbstractLattice=fallback_lattice)
      argtypes = matching_cache_argtypes(𝕃, mi)
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index 43412ab952e3716f216a2c4d6800c9f116d71210..2a3e525cecd907900ce96faaf73426589ac1964a 100644
+index 6600dc5562aad92c28fee58e24c3331d5c888f5b..24d4bcd3d5a0633d525a140e56782c20f7275ea4 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
 @@ -6724,6 +6724,70 @@ Base.@constprop :aggressive type_level_recurse2(x...) = type_level_recurse1(x...

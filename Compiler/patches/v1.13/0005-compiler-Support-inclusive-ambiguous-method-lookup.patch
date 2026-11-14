@@ -110,10 +110,10 @@ index 09d29d5c7254b25c5c410ac3d019aff36d9843f7..21c46f179d17cc1449710e0f323467b3
  end
  
 diff --git a/Compiler/test/AbstractInterpreter.jl b/Compiler/test/AbstractInterpreter.jl
-index b41c872c4d1c4dba0d8ead7955e9102d27b9f521..0aa7fade371ec190d531b02aa69f7eea571bbd40 100644
+index 4041f4c45aeeb91d7df26fb7674573540b1933de..6b739e24fae6a61ea4bcc0d88e55208ec55048cc 100644
 --- a/Compiler/test/AbstractInterpreter.jl
 +++ b/Compiler/test/AbstractInterpreter.jl
-@@ -34,6 +34,41 @@ end
+@@ -51,6 +51,41 @@ end
  @MethodTable OVERLAY_MT
  Compiler.method_table(interp::MTOverlayInterp) = Compiler.OverlayMethodTable(Compiler.get_inference_world(interp), OVERLAY_MT)
  
