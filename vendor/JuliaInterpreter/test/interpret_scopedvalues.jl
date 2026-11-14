@@ -52,13 +52,28 @@ let frame = JuliaInterpreter.enter_call() do
     @test (2, 3) == @with sval1 => 2 sval2 => 3 JuliaInterpreter.finish_and_return!(frame)
 end
 
-# Under an active dynamic scope, a native call is run via `Core.eval` of a scope-installing
-# expression. Its arguments must be spliced as literal values: an AST-significant argument
-# such as the `Symbol` in `string(:abcsym)` would otherwise be re-evaluated as a variable
-# reference and throw `UndefVarError(:abcsym)`.
-symarg_func() = string(:abcsym)
+# A compiled call made from interpreted code sees a scope that was already active when the
+# interpreter was entered (it inherits it from the task; nothing needs to be re-installed)
+_sval1_caller() = _sval1_func2()
+let m = only(methods(_sval1_func2))
+    push!(JuliaInterpreter.compiled_methods, m)
+    try
+        @test 3 == @with sval1 => 3 @interpret _sval1_caller()
+        @test (3, 4) == @with sval1 => 3 begin
+            @with sval2 => 4 (@interpret(_sval1_caller()), @interpret(getindex(sval2)))
+        end
+    finally
+        delete!(JuliaInterpreter.compiled_methods, m)
+    end
+end
+
+# Under a dynamic scope entered by interpreted code, a native call is run via `Core.eval` of a
+# scope-installing expression. Its arguments must be spliced as literal values: an
+# AST-significant argument such as the `Symbol` in `string(:abcsym)` would otherwise be
+# re-evaluated as a variable reference and throw `UndefVarError(:abcsym)`.
+symarg_func() = @with sval1 => 2 string(:abcsym, sval1[])
 let frame = JuliaInterpreter.enter_call(symarg_func)
-    @test "abcsym" == @with sval1 => 2 JuliaInterpreter.finish_and_return!(NonRecursiveInterpreter(), frame)
+    @test "abcsym2" == JuliaInterpreter.finish_and_return!(NonRecursiveInterpreter(), frame)
 end
 
 # ScopedValue state must not leak when an exception unwinds out of an @with block

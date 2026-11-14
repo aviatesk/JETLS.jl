@@ -807,22 +807,33 @@ end
         end == 1
     end
 
-    # `` `...` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where the
-    # cmd content is a single opaque `CmdString` leaf — the parser does not
-    # split `\$name` interpolations into child nodes. So a cursor placed on
-    # the `x` inside `` `\$x` `` resolves to the `CmdString` (not an
-    # `Identifier`), and binding lookup can't reach the `x` argument above.
-    # Macro expansion recovers usedness but with byte-range-0:0 provenance,
-    # which doesn't help source-position-based lookups.
+    # aviatesk/JETLS.jl#1052
     @testset "cmd literal interpolation" begin
         @test with_target_binding_definitions("""
             function f(x)
-                `echo \$x│`
+                `echo \$│x│ --flag=\$(│x│)`
             end
         """) do _, res
-            @test_broken !isnothing(res)
+            @test !isnothing(res)
+            binding, defs = res
+            @test JS.source_line(BS.sourceref(binding)) == 2
+            @test length(defs) == 1
+            @test JS.source_line(BS.sourceref(only(defs))) == 1
             return true
-        end == 1
+        end == 4
+    end
+
+    # The name of the macro that a literal is parsed to is not written in the source
+    @testset "synthesized macro name" begin
+        @test with_target_binding("""
+            function f(x)
+                `ec│ho \$x --flag│=\$(x)`
+                return 1701411834604692317316873037158841057│28
+            end
+        """) do _, res
+            @test isnothing(res)
+            return true
+        end == 3
     end
 end
 

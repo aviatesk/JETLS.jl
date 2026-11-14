@@ -622,6 +622,33 @@ end
     end
 end
 
+# aviatesk/JETLS.jl#1035
+@testset "module docstring interpolation" begin
+    script_code = """
+    \"\"\"
+    \$(VAR) \$(catalan)
+    \"\"\"
+    module Documented
+    using Base.MathConstants: catalan, golden
+    const VAR = 1
+    end
+    """
+    withscript(script_code) do script_path
+        uri = filepath2uri(script_path)
+        rootUri = filepath2uri(dirname(script_path))
+        withserver(; rootUri) do (; server, writereadmsg, readmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            diagnostics = scan_live_diagnostics!(server, readmsg)[uri].diagnostics
+            @test !any(d -> d.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE, diagnostics)
+            diagnostic = only(filter(diagnostics) do d
+                d.code == JETLSCore.LOWERING_UNUSED_IMPORT_CODE
+            end)
+            @test occursin("golden", diagnostic.message)
+        end
+    end
+end
+
 @testset "methods defined by `@eval`" begin
     let code = """
         @eval f(x::Int) = x + undefined_in_eval

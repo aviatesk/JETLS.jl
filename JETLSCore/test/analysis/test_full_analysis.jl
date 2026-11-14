@@ -1229,7 +1229,7 @@ end
         @test JETLSCore.collect_module_range_infos(st0_top, module_range_target, world) == [
             (1:typemax(Int)) => module_range_target,
             3:9 => module_range_target.A,
-            6:7 => module_range_target.A.B,
+            5:7 => module_range_target.A.B,
             11:12 => module_range_target.C]
     end
 
@@ -1245,6 +1245,46 @@ end
             (1:typemax(Int)) => module_range_target,
             1:4 => module_range_target,
             2:3 => module_range_target.A]
+    end
+end
+
+@testset "document symbols use the module context of the top level of the file" begin
+    function has_argument_symbol(server, entry_uri, uri, code)
+        state = server.state
+        (; result) = analyze_saved_unit(server, entry_uri)
+        JETLSCore.update_analysis_cache!(state, result)
+        JETLSCore.cache_file_info!(server, uri, 1, code)
+        fi = JETLSCore.get_file_info(state, uri)::JETLSCore.FileInfo
+        f = only(filter(s -> s.name == "f", JETLSCore.get_document_symbols!(state, uri, fi)))
+        return any(c -> c.name == "x", something(f.children, DocumentSymbol[]))
+    end
+
+    # a module at the first line
+    with_analysis_server() do server, dir
+        uri = filepath2uri(joinpath(dir, "main.jl"))
+        code = """
+            module A
+            end
+            using Base: @nospecialize as @ns
+            f(@ns x) = x
+            """
+        JETLSCore.cache_saved_file_info!(server.state, uri, code)
+        @test has_argument_symbol(server, uri, uri, code)
+    end
+
+    # an included file with a syntax error, whose top level does not span the whole file
+    with_analysis_server() do server, dir
+        main_uri = filepath2uri(joinpath(dir, "main.jl"))
+        broken_uri = filepath2uri(joinpath(dir, "broken.jl"))
+        broken_code = "f(@ns x) = x\n)\n"
+        JETLSCore.cache_saved_file_info!(server.state, main_uri, """
+            module P
+            using Base: @nospecialize as @ns
+            include("broken.jl")
+            end
+            """)
+        JETLSCore.cache_saved_file_info!(server.state, broken_uri, broken_code)
+        @test has_argument_symbol(server, main_uri, broken_uri, broken_code)
     end
 end
 

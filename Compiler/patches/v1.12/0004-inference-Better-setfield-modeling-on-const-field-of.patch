@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shuhei Kadowaki <40514306+aviatesk@users.noreply.github.com>
+Date: Wed, 1 Jul 2026 10:45:39 +0900
+Subject: [PATCH] inference: Better `setfield!` modeling on `const` field of
+ `PartialStruct` (#62234)
+
+For ordinary `DataType` objects, `setfield!_tfunc` already widens a
+`setfield!` on a `const` field to `Bottom`, since storing into a const
+field always throws at runtime. The `PartialStruct` branch of
+`_getfield_tfunc` did not apply the same check and instead returned the
+refined field type, so `setfield!_tfunc` reported a non-`Bottom` result
+for a `setfield!` on a const field of a value modeled as a
+`PartialStruct`. Apply the same `isconst` guard on that branch so the
+result is consistently inferred as `Bottom`.
+---
+ Compiler/src/tfuncs.jl     | 1 +
+ Compiler/test/inference.jl | 5 ++---
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/Compiler/src/tfuncs.jl b/Compiler/src/tfuncs.jl
+index 57c1fe45ba6617af86cdb30bb551eee6e522ab19..a8c4cea432f2b571cb24ed3e404fa925a7a24d84 100644
+--- a/Compiler/src/tfuncs.jl
++++ b/Compiler/src/tfuncs.jl
+@@ -1178,6 +1178,7 @@ end
+         if isa(name, Const)
+             nv = _getfield_fieldindex(sty, name)
+             if isa(nv, Int) && 1 <= nv <= length(s00.fields)
++                setfield && isconst(sty, nv) && return Bottom
+                 return unwrapva(s00.fields[nv])
+             end
+         end
+diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
+index 2e41547f23dad2c147930aeec13a1632842f4c78..998db6339a0ebdb00725e331682abd2e1fc97236 100644
+--- a/Compiler/test/inference.jl
++++ b/Compiler/test/inference.jl
+@@ -133,8 +133,6 @@ end
+ @test Compiler.limit_type_size(Type{Union{Int,Type{Int}}}, Union{Type{Int},Type{Type{Int}}}, Union{}, 0, 0) == Type
+ @test Compiler.limit_type_size(Type{Union{Int,Type{Int}}}, Type{Union{Type{Int},Type{Type{Int}}}}, Union{}, 0, 0) == Type{Union{Int, Type{Int}}}
+ @test Compiler.limit_type_size(Type{Union{Int,Type{Int}}}, Type{Type{Int}}, Union{}, 0, 0) == Type
+-
+-
+ @test Compiler.limit_type_size(Type{Any}, Union{}, Union{}, 0, 0) ==
+       Compiler.limit_type_size(Type{Any}, Any, Union{}, 0, 0) ==
+       Compiler.limit_type_size(Type{Any}, Type, Union{}, 0, 0) ==
+@@ -1765,7 +1763,7 @@ let getfield_tfunc(@nospecialize xs...) =
+     @test getfield_tfunc(ARef{Int},Const(:x),Bool,Bool) === Union{}
+ end
+ 
+-using Core: Const
++using Core: Const, PartialStruct
+ mutable struct XY{X,Y}
+     x::X
+     y::Y
+@@ -1795,6 +1793,7 @@ let setfield!_tfunc(@nospecialize xs...) =
+     @test setfield!_tfunc(ABCDconst, Const(:c), Any) === Any
+     @test setfield!_tfunc(ABCDconst, Const(3), Any) === Any
+     @test setfield!_tfunc(ABCDconst, Symbol, Any) === Any
++    @test setfield!_tfunc(PartialStruct(Compiler.fallback_lattice, ABCDconst, Any[Const(42), Int, Any, Union{Int,Nothing}]), Const(:a), Int) === Union{}
+     @test setfield!_tfunc(ABCDconst, Int, Any) === Any
+     @test setfield!_tfunc(Union{Base.RefValue{Any},Some{Any}}, Const(:x), Int) === Int
+     @test setfield!_tfunc(Union{Base.RefValue,Some{Any}}, Const(:x), Int) === Int

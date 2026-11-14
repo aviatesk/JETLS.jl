@@ -311,7 +311,6 @@ function is_new_style_macrocall0(
     end
 end
 
-is_doc0(st0::SyntaxTree) = is_macrocall_st0(st0, "@doc"; from=Core)
 is_doc0_any(st0::SyntaxTree) = is_macrocall_st0(st0, "@doc") # Explicit `@doc` can have any module set.
 
 is_documenting_doc0(st0::SyntaxTree) = JS.numchildren(st0) ≥ 4 && is_doc0_any(st0)
@@ -325,6 +324,12 @@ function is_unsplittable_doc0(st0::SyntaxTree)
 end
 
 is_cmd0(st0::SyntaxTree) = is_macrocall_st0(st0, "@cmd"; from=Core)
+
+# The parser synthesizes the name of the macro that a literal is parsed to, i.e. `Core.@cmd`,
+# `Core.@doc`, and `Core.@big_str` etc. for integer literals beyond `Int64`. Such a name
+# isn't written in the source, and spans the whole macrocall.
+is_synthesized_macro_name(macro_name::SyntaxTree) =
+    JS.head(macro_name) === :identifier && macro_name.mod !== nothing
 
 is_static0(context_module::Module, world::UInt, st0::SyntaxTree) =
     is_macrocall_binding0(context_module, world, st0, Base, Symbol("@static"))
@@ -485,8 +490,7 @@ function _remove_macrocalls(
             push!(new_children, st0[1])
             changed = false
             for i = 2:JS.numchildren(st0)
-                child, child_changed = _remove_macrocalls(
-                    context_module, world, st0[i]; strip_static)
+                child, child_changed = _remove_macrocalls(context_module, world, st0[i]; strip_static)
                 changed |= child_changed
                 push!(new_children, child)
             end
@@ -495,15 +499,11 @@ function _remove_macrocalls(
             # `@main` functions are desugared by `desugar_main_macrocall` below,
             # so there's no need to remove them here
             return st0, false
-        elseif is_cmd0(st0)
-            # `` `foo` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where
-            # `CmdString` is an opaque leaf JuliaLowering has no rule for at
-            # statement position. Strip-to-block would result in lowering failure,
-            # so leave the macrocall intact and let `Core.@cmd` expansion run.
-            # Expansion collapses interpolations' provenance, which means features like
-            # rename/references can't pinpoint a name used inside a cmd literal --
-            # but binding occurrence analysis still get correct results.
-            return st0, false
+        end
+        stripped = strip_interpolated_literal(context_module, world, st0)
+        if stripped !== nothing
+            stripped === st0 && return st0, false
+            return first(_remove_macrocalls(context_module, world, stripped; strip_static)), true
         end
         new_children = SyntaxList()
         for i = 2:JS.numchildren(st0)
@@ -514,8 +514,7 @@ function _remove_macrocalls(
             # arguments out of the macrocall into a bare `block`, any surviving
             # `$` would be out of context and fail lowering, so unwrap
             # interpolations on the lifted child.
-            stripped, _ = _remove_macrocalls(
-                context_module, world, st0[i]; strip_static)
+            stripped, _ = _remove_macrocalls(context_module, world, st0[i]; strip_static)
             push!(new_children, _unwrap_interpolations(stripped)[1])
         end
         return JL.@ast(_, st0, [:block new_children...]), true
@@ -609,6 +608,11 @@ are resolved from `context_module`; calls whose macro object matches a binding i
 `NEW_STYLE_MACRO_BINDINGS` are preserved. The transformed tree can then be fed into
 scope/binding resolution to drive LSP features such as find-references,
 document-highlight, rename, and go-to-definition.
+
+A cmd literal or a `lazy"..."` string with `\$` interpolations is replaced with a `block`
+of them in the same way. The parser leaves them unparsed in the string of the literal, so
+they are parsed here with their source locations, which also lets the macro calls in them
+be converted.
 
 With `strip_static=true`, `@static` conditionals are also rewritten to plain runtime
 conditionals (keeping every branch) rather than expanded to the single branch selected

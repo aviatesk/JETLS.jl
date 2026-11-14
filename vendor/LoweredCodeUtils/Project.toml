@@ -10,17 +10,17 @@ JuliaInterpreter = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
 
 [sources.Compiler]
 subdir = "vendor/Compiler"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [compat]

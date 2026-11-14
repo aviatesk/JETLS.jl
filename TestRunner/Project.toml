@@ -20,62 +20,62 @@ BaseSyntax = "bfd32023-066c-5f76-8dc3-939c60a69aeb"
 
 [sources.JuliaSyntax]
 subdir = "vendor/JuliaSyntax"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Compiler]
 subdir = "vendor/Compiler"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.MacroTools]
 subdir = "vendor/MacroTools"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
 subdir = "vendor/LoweredCodeUtils"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.StructTypes]
 subdir = "vendor/StructTypes"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Parsers]
 subdir = "vendor/Parsers"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JSON3]
 subdir = "vendor/JSON3"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.BaseSyntax]
 subdir = "vendor/BaseSyntax"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [compat]

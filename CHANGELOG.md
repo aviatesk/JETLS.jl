@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`c24f9a1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c24f9a1...HEAD)
+- Diff: [`2f6c9cc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/2f6c9cc...HEAD)
 
 ### Announcement
 
@@ -30,21 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 <!-- Added: 2026-10-26 / Remove after: 2026-11-26 -->
 > [!tip]
-> JETLS runs noticeably faster on Julia 1.14 than on Julia 1.13, and even faster on the [optimized builds of Julia 1.14](https://discourse.julialang.org/t/julia-v1-14-0-alpha1-is-now-available/140136#p-648514-new-optimized-and-assertion-builds-experimental-1), which juliaup provides as the `+opt` channels:
+> JETLS runs noticeably faster on Julia 1.14 than on Julia 1.13, and even faster on the [optimized builds of Julia 1.14](https://discourse.julialang.org/t/julia-v1-14-0-beta1-is-now-available/142934#p-651784-optimized-and-assertion-builds-experimental-1), which juliaup provides as the `+opt` channels:
 > for example, on an optimized build, `jetls check` takes about _14%_ less time on the JETLS repository ([scripts/selfcheck.sh](https://github.com/aviatesk/JETLS.jl/blob/master/scripts/selfcheck.sh)), and _35–50%_ less on mid-sized packages such as [JSON3.jl](https://github.com/quinnj/JSON3.jl), [DataStructures.jl](https://github.com/JuliaCollections/DataStructures.jl) and [Graphs.jl](https://github.com/JuliaGraphs/Graphs.jl).
 > See [Prerequisites](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation/prerequisites) for how to run `jetls` on one.
-
-<!-- Added: 2026-10-11 / Remove after: 2026-11-11 -->
-> [!note]
-> TestRunner.jl is now developed in this repository as a [subpackage](https://github.com/aviatesk/JETLS.jl/tree/master/TestRunner) and released together with JETLS, and [aviatesk/TestRunner.jl](https://github.com/aviatesk/TestRunner.jl) is no longer updated.
-> Installing JETLS is all you need to run tests with TestRunner.jl: the [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/testrunner/) keeps using the TestRunner.jl bundled with JETLS, and the new [`jetls test`](https://aviatesk.github.io/JETLS.jl/release/testrunner/#testrunner/cli) command runs tests with it from the command line:
-> ```bash
-> jetls test test/runtests.jl "selected tests"
-> ```
-> If you want to run TestRunner.jl without loading JETLS, install the standalone `testrunner` executable from this repository, which replaces the one installed from aviatesk/TestRunner.jl:
-> ```bash
-> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", subdir="TestRunner", rev="release")'
-> ```
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
@@ -64,6 +52,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Fixed
+
+- Fixed JETLS failing to precompile on Julia 1.14.0-beta1.
+  JETLS no longer runs on Julia 1.14 alpha releases; use 1.14.0-beta1 or later.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1056)
+
+- Fixed spurious [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/method-error) and [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error) diagnostics on a value whose type is not precisely known, such as an untyped argument, after it is passed to a function with a few methods, as if the value could be of any of the argument types of those methods.
+  For example, the following no longer reports a `FieldError` for `Square`:
+  ```julia
+  area(c::Circle) = π * c.r^2
+  area(s::Square) = s.side^2
+  function describe(c)
+      a = area(c)
+      return "r = $(c.r), area = $a"
+  end
+  ```
+
+- Fixed identifiers interpolated into the docstring of a module being resolved outside the module rather than within it, which falsely reported the names of the module by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) and [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import):
+  ```julia
+  """
+  $(EXPORTS)
+  """
+  module Foo
+  using DocStringExtensions: EXPORTS  # was reported as `lowering/unused-import`
+  f(x) = 2x
+  export f
+  end
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1035)
+
+- Fixed full-analysis diagnostics for code within a module with a docstring being reported at the `module` line instead of the code that caused them.
+
+- Fixed [type inlay hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types), hover, and other features that show inferred types failing on Julia 1.14 and later for code that uses `ccall`, such as the `Sockets` standard library.
+
+- Fixed find-references, document-highlight, and rename treating the whole line of a command literal as an occurrence of an identifier interpolated into it, such as `a` in `` `echo $a` ``.
+  These features, hover, and go-to-definition now work on such identifiers, and undefined ones are reported by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var).
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1052)
+
+- Fixed command literals and integer literals beyond `Int64` being targets of rename, which replaced every such literal with the new name, and of find-references, document-highlight, hover, and go-to-definition.
+
+- Fixed find-references, document-highlight, and rename mislocating identifiers interpolated into some `lazy"..."` strings, e.g. a triple-quoted one whose closing `"""` is not on a line of its own, or `n` in `lazy"$(@time(string(n)))"`.
+
+- Fixed `lazy"..."c`, the compact form of lazy strings added in Julia 1.14, being reported as a macro expansion error, with the names interpolated into it reported as unused.
+
+## 2026-11-04
+
+- Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)
+- Diff: [`c24f9a1...2f6c9cc`](https://github.com/aviatesk/JETLS.jl/compare/c24f9a1...2f6c9cc)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-11-04")'
+  ```
 
 ### Changed
 

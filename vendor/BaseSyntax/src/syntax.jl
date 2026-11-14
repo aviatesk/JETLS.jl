@@ -905,3 +905,23 @@ function Base.show(io::IO, node::Syntax)
     assert_syntax(node)
     _show_syntax_tree_sexpr(io, node)
 end
+
+#-------------------------------------------------------------------------------
+# generated functions produced by JuliaLowering.  TODO: consolidate with
+# GeneratedFunctionStub
+
+struct SyntaxGeneratedFunctionStub
+    syntax_context::SyntaxContext
+    gen::Function
+    srcref::Union{LineNumberNode,SourceRef}
+    argnames::Core.SimpleVector
+    spnames::Core.SimpleVector
+end
+
+# A package copy of `BaseSyntax` leaves this method to the package copy of JuliaLowering,
+# since the copy in `Base` (if any) does not lower syntax trees of the package's types.
+if parentmodule(@__MODULE__) === Base
+function (g::SyntaxGeneratedFunctionStub)(world::UInt, source::Method, @nospecialize args...)
+    Base.JuliaLowering.lower_generated_code(g, world, source, args...)
+end
+end

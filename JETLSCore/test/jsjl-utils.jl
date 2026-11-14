@@ -28,7 +28,7 @@ function jldebug(context_module::Module, st0_in::SyntaxTree, stop::Int=5)
     st1 = JL.expand_forms_1(st0, world, true)
     (stop -= 1) < 0 && return nothing, st1
     ctx2, st2 = JL.expand_forms_2(st1, world)
-    (stop -= 1) < 0 && return ctx2, st2; ctx3, st3 = JL.resolve_scopes(ctx2, st2)
+    (stop -= 1) < 0 && return ctx2, st2; ctx3, st3 = JL.resolve_scopes(ctx2, st2, false, false)
     (stop -= 1) < 0 && return ctx3, st3; ctx4, st4 = JL.convert_closures(ctx3, st3)
     (stop -= 1) < 0 && return ctx4, st4; ctx5, st5 = JL.linearize_ir(ctx4, st4)
     return ctx5, st5

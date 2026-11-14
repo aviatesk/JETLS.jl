@@ -39,8 +39,7 @@ end
 function run_testrunner_process(args; stdin_input::Union{Nothing,AbstractString}=nothing,
                                 dir::AbstractString=pwd())
     project = pkgdir(TestRunner)
-    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$project -e "using TestRunner; exit(TestRunner.main(ARGS))" -- $args`
-    cmd = Cmd(cmd; dir)
+    cmd = Cmd(`$(Base.julia_cmd()) --startup-file=no --project=$project -e "using TestRunner; exit(TestRunner.main(ARGS))" -- $args`; dir)
 
     mktemp() do out_path, _
         mktemp() do err_path, _

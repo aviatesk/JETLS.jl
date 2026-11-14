@@ -71,7 +71,7 @@ formatter = "JuliaFormatter"
 In this case, JETLS will look for the `jlfmt` executable and use it to perform
 formatting.
 
-If a [`.JuliaFormatter.toml` configuration](https://domluna.github.io/JuliaFormatter.jl/dev/config/)
+If a [`.JuliaFormatter.toml` configuration](https://juliaeditorsupport.github.io/JuliaFormatter.jl/stable/config/#config)
 file is found in your project, `jlfmt` will use those settings.
 Otherwise, it uses default settings with formatting options provided by the
 editor client (such as tab size) when available.

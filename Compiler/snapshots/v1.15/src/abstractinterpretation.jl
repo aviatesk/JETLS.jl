@@ -92,15 +92,6 @@ function multiple_methods(m::UnionSplitMethodMatches)
     return false
 end
 
-nmatches(info::MethodMatchInfo) = length(info.results)
-function nmatches(info::UnionSplitInfo)
-    n = 0
-    for mminfo in info.split
-        n += nmatches(mminfo)
-    end
-    return n
-end
-
 # intermediate state for computing gfresult
 mutable struct CallInferenceState
     inferidx::Int
@@ -270,7 +261,8 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
                             Any[Bottom for _ in 1:length(argtypes)])
                     end
                     for i = 1:length(argtypes)
-                        cnd = conditional_argtype(𝕃ᵢ, this_conditional, match.spec_types, argtypes, i)
+                        sigt = refinement_sigtype(interp, applicable, argtypes, state.inferidx, i)
+                        cnd = conditional_argtype(𝕃ᵢ, this_conditional, match.spec_types, argtypes, i, sigt)
                         conditionals[1][i] = conditionals[1][i] ⊔ᵢ cnd.thentype
                         conditionals[2][i] = conditionals[2][i] ⊔ᵢ cnd.elsetype
                     end
@@ -300,7 +292,7 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
             end
             local fargs = arginfo.fargs
             if sv isa InferenceState && fargs !== nothing
-                state.slotrefinements = collect_slot_refinements(𝕃ᵢ, applicable, argtypes, fargs, sv)
+                state.slotrefinements = collect_slot_refinements(interp, applicable, argtypes, fargs, sv)
             end
             state.rettype = from_interprocedural!(interp, state.rettype, sv, arginfo, state.conditionals, vtypes)
             if widen_call_result(interp, si, state, sv)
@@ -596,14 +588,19 @@ function from_interconditional(𝕃ᵢ::AbstractLattice, @nospecialize(rt), sv::
     return widenconditional(rt)
 end
 
+refinement_sigtype(::AbstractInterpreter, applicable::Vector{MethodMatchTarget},
+                   ::Vector{Any}, j::Int, i::Int) =
+    fieldtype(applicable[j].match.spec_types, i)
+
 function conditional_argtype(𝕃ᵢ::AbstractLattice, @nospecialize(rt), @nospecialize(sig),
-                             argtypes::Vector{Any}, i::Int)
+                             argtypes::Vector{Any}, i::Int,
+                             @nospecialize(sigt = fieldtype(sig, i)))
     argt = widenslotwrapper(argtypes[i])
     if isvarargtype(argt)
         @assert fieldcount(sig) == i
         argt = unwrapva(argt)
     end
-    argt = tmeet(𝕃ᵢ, argt, fieldtype(sig, i))
+    argt = tmeet(𝕃ᵢ, argt, sigt)
     if isa(rt, InterConditional) && rt.slot == i
         return InterConditional(i, tmeet(𝕃ᵢ, rt.thentype, widenconst(argt)), tmeet(𝕃ᵢ, rt.elsetype, widenconst(argt)))
     end
@@ -614,8 +611,9 @@ function conditional_argtype(𝕃ᵢ::AbstractLattice, @nospecialize(rt), @nospe
     return InterConditional(i, thentype, elsetype)
 end
 
-function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{MethodMatchTarget},
+function collect_slot_refinements(interp::AbstractInterpreter, applicable::Vector{MethodMatchTarget},
     argtypes::Vector{Any}, fargs::Vector{Any}, sv::InferenceState)
+    𝕃ᵢ = typeinf_lattice(interp)
     ⊏, ⊔ = strictpartialorder(𝕃ᵢ), join(𝕃ᵢ)
     slotrefinements = nothing
     for i = 1:length(fargs)
@@ -630,7 +628,7 @@ function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{M
             for j = 1:length(applicable)
                 (;match) = applicable[j]
                 valid_as_lattice(match.spec_types, true) || continue
-                sigt = sigt ⊔ fieldtype(match.spec_types, i)
+                sigt = sigt ⊔ refinement_sigtype(interp, applicable, argtypes, j, i)
             end
             if sigt ⊏ argt # i.e. signature type is strictly more specific than the type of the argument slot
                 if slotrefinements === nothing
@@ -648,7 +646,7 @@ function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{M
             for j = 1:length(applicable)
                 (;match) = applicable[j]
                 valid_as_lattice(match.spec_types, true) || continue
-                sigt = sigt ⊔ fieldtype(match.spec_types, i)
+                sigt = sigt ⊔ refinement_sigtype(interp, applicable, argtypes, j, i)
             end
             if sigt ⊏ argt # i.e. signature type is strictly more specific than the field type
                 newtyp = form_mustalias_refinement(alias, sigt)
@@ -881,12 +879,6 @@ function matches_sv(parent::AbsIntState, sv::AbsIntState)
             method_for_inference_limit_heuristics(sv) === method_for_inference_limit_heuristics(parent))
 end
 
-function is_method_recursed(method::Method, caller::AbsIntState)
-    return any(AbsIntStackUnwind(caller)) do sv::AbsIntState
-        return method === frame_instance(sv).def
-    end
-end
-
 function is_constprop_edge_recursed(edge::MethodInstance, caller::AbsIntState)
     return any(AbsIntStackUnwind(caller)) do sv::AbsIntState
         return edge === frame_instance(sv) && is_constproped(sv)
@@ -990,7 +982,9 @@ function abstract_call_method_with_const_args(interp::AbstractInterpreter,
     # try constant prop'
     new_result = const_prop_call(interp, mi, result, arginfo, sv, concrete_eval_result)
     new_result === nothing && return nothing
-    if eligibility === :none
+    # running a call that never returns gains nothing, and if it also cannot throw,
+    # its code is unreachable and may be undefined behavior
+    if eligibility === :none && new_result.rt !== Bottom
         # const-prop' may have refined effects to be foldable when the original
         # call was not; in that case, prefer concrete eval over the const-prop' result
         proof = inference_proof(new_result.const_result)
@@ -3471,6 +3465,8 @@ function abstract_eval_new(interp::AbstractInterpreter, e::Expr, sstate::Stateme
     argtype = abstract_eval_value(interp, e.args[1], sstate, sv)
     rt, _... = instanceof_tfunc(argtype, true)
     ut = unwrap_unionall(rt)
+    # only the runtime may allocate such a type (see `check_new_struct_type`)
+    isa(ut, DataType) && datatype_hashiddenfields(ut) && return RTEffects(Bottom, ErrorException, EFFECTS_THROWS)
     exct = Union{ErrorException,TypeError}
     if isa(ut, DataType) && !isabstracttype(ut)
         ismutable = ismutabletype(ut)
@@ -3572,6 +3568,9 @@ function abstract_eval_splatnew(interp::AbstractInterpreter, e::Expr, sstate::St
     𝕃ᵢ = typeinf_lattice(interp)
     argtype = abstract_eval_value(interp, e.args[1], sstate, sv)
     rt, isexact = instanceof_tfunc(argtype, true)
+    ut = unwrap_unionall(rt)
+    # only the runtime may allocate such a type (see `check_new_struct_type`)
+    isa(ut, DataType) && datatype_hashiddenfields(ut) && return RTEffects(Bottom, ErrorException, EFFECTS_THROWS)
     # `:splatnew` throws on a `UnionAll` or `Union` rep that is only `==` to `rt` (#61323)
     isexact = isexact && widenconst(argtype) <: DataType
     nothrow = false
@@ -3975,8 +3974,7 @@ function abstract_eval_foreigncall(interp::AbstractInterpreter, e::Expr, sstate:
     end
     cconv = e.args[5]
     if isa(cconv, QuoteNode) && (v = cconv.value;
-        isa(v, Union{Tuple{Symbol, UInt16, Bool}, Tuple{Symbol, UInt16, Bool, Bool},
-                     Tuple{Symbol, UInt16, Bool, Bool, Bool}}))
+        isa(v, Union{Tuple{Symbol, UInt16, Bool}, Tuple{Symbol, UInt16, Bool, Bool}}))
         override = decode_effects_override(v[2])
         effects = override_effects(effects, override)
     end
@@ -4009,11 +4007,6 @@ function abstract_eval_phi(interp::AbstractInterpreter, phi::PhiNode, sstate::St
         rt = tmerge(typeinf_lattice(interp), rt, thisval)
     end
     return rt
-end
-
-function stmt_taints_inbounds_consistency(sv::AbsIntState)
-    propagate_inbounds(sv) && return true
-    return has_curr_ssaflag(sv, IR_FLAG_INBOUNDS)
 end
 
 function merge_override_effects!(interp::AbstractInterpreter, effects::Effects, sv::InferenceState)

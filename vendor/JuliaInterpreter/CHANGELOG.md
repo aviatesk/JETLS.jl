@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- On Julia 1.10, stepping over an error caught by a `catch err` block no longer
+  stops on the exception binding (`err = the_exception`) on the line of the
+  `try` body, and lands in the catch body as on later Julia versions
+  (JuliaDebug/JuliaInterpreter.jl#786).
 - Updated the builtins for Julia 1.14.0-alpha1, where `Core.depwarn_partition`
   was replaced by `Core.depwarn_binding` (JuliaLang/julia#63470).
 - On Julia 1.14, a generated function called with a type argument, as in

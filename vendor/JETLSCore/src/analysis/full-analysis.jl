@@ -1380,7 +1380,8 @@ end
 
 function collect_module_range_infos!(
         module_range_infos::Vector{Pair{UnitRange{Int},Module}}, st0::SyntaxTree,
-        context_module::Module, world::UInt
+        context_module::Module, world::UInt;
+        range_st0::SyntaxTree = st0
     )
     if JS.head(st0) === :toplevel
         for i = 1:JS.numchildren(st0)
@@ -1388,7 +1389,8 @@ function collect_module_range_infos!(
         end
     elseif is_doc0_any(st0)
         for i = 3:JS.numchildren(st0)
-            collect_module_range_infos!(module_range_infos, st0[i], context_module, world)
+            # the docstring of a module is evaluated within the module
+            collect_module_range_infos!(module_range_infos, st0[i], context_module, world; range_st0 = st0)
         end
     elseif JS.head(st0) === :module
         module_name = @something module_name_node(st0) return nothing
@@ -1399,7 +1401,7 @@ function collect_module_range_infos!(
         mod isa Module || return nothing
         sourcefile = JS.sourcefile(st0)
         sourcefile isa JS.SourceFile || return nothing
-        first_line = JS.source_line(sourcefile, JS.first_byte(st0))
+        first_line = JS.source_line(sourcefile, JS.first_byte(range_st0))
         last_line = JS.source_line(sourcefile, JS.last_byte(st0))
         push!(module_range_infos, first_line:last_line => mod)
         body = st0[end]

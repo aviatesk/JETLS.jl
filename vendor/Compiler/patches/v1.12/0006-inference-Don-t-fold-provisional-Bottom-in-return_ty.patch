@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shuhei Kadowaki <aviatesk@gmail.com>
+Date: Tue, 21 Jul 2026 01:13:54 +0900
+Subject: [PATCH] inference: Don't fold provisional `Bottom` in
+ `return_type_tfunc`
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When `Base._return_type` is queried on a function participating in
+the currently-active inference cycle (e.g. the `@default_eltype`
+query inside the `map`/`_collect` machinery applied to a
+self-recursive function), the inner `abstract_call` may return the
+provisional `Union{}` bestguess of a frame that is still being
+inferred. `return_type_tfunc` folded that into `Const(Union{})` as an
+answer "known for certain". The reified bottom cannot be retracted by
+the join-based fixed-point state (frame bestguess, block-entry
+variable states) once the callee converges to a non-`Bottom` type,
+leaving spurious `Vector{Union{}}`-like components in the converged
+result, dependent on which specialization happened to be inferred
+first:
+
+    struct TT; children::Union{Nothing,Vector{TT}}; end
+    frec(t::TT) =
+        TT(t.children === nothing ? nothing : map(frec, t.children))
+    frec(TT(nothing))  # compile `frec` first
+    only(Base.return_types(map, (typeof(frec), Vector{TT})))
+    # => Union{Vector{Union{}}, Vector{TT}}
+    # (`Vector{TT}` when `map` is inferred first instead)
+
+Suppress only the `rt === Bottom` fold when `sv` is part of a
+multi-frame cycle (`callers_in_cycle`), returning the conservative
+`Type` answer instead. Non-`Bottom` folds are kept even inside a
+cycle: `callers_in_cycle` is a coarse signal and those folds are
+usually justified — gating them too regresses the `map`-first order
+from `Vector{TT}` to `Vector` — while a stale non-bottom fold only
+leaves benign inhabited-type components. `Type{<:rt}` is not a valid
+conservative answer here since `Type{<:Union{}}` is equivalent to
+`Const(Union{})`.
+
+This is the same problem class as #39375, which handled the
+recursion-limited flavor via the `pclimitations` check; a plain
+same-signature cycle sets no `pclimitations`, and the `Bottom` fold
+fired before that check anyway. Folds for converged always-throwing
+callees (the #20033 / #21066 cases) are unaffected, as is the
+`map`-first inference order.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ Compiler/src/tfuncs.jl     | 14 +++++++++++++-
+ Compiler/test/inference.jl | 18 ++++++++++++++++++
+ 2 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/Compiler/src/tfuncs.jl b/Compiler/src/tfuncs.jl
+index 34e578eee10069685eaffd38cee44ed4ee0ab637..7b266e8eeea22d02368c98a6a86470a65c902398 100644
+--- a/Compiler/src/tfuncs.jl
++++ b/Compiler/src/tfuncs.jl
+@@ -3119,7 +3119,19 @@ function return_type_tfunc(interp::AbstractInterpreter, argtypes::Vector{Any}, s
+             return CallMeta(Const(typeof(rt.val)), Union{}, RT_CALL_EFFECTS, info)
+         end
+         rt = widenconst(rt)
+-        if rt === Bottom || (isconcretetype(rt) && !iskindtype(rt))
++        if rt === Bottom && isa(sv, InferenceState) && !isempty(callers_in_cycle(sv))
++            # During a cycle `rt` may be the provisional bestguess of a frame that is
++            # still being inferred and can improve to a non-`Bottom` type once the
++            # cycle converges. Folding it into `Const(Union{})` here would reify the
++            # provisional `Bottom` as a certain answer that the join-based state of
++            # the fixed-point iteration (frame bestguess, block entry states) can
++            # never retract, leaving spurious `Core.TypeofBottom`-parameterized
++            # components (e.g. `Vector{Union{}}`) in the converged result, in an
++            # inference-order-dependent way.
++            # N.B. `Type{<:rt}` is not conservative enough for this case, since
++            # `Type{<:Union{}}` is equivalent to `Const(Union{})`.
++            return CallMeta(Type, Union{}, RT_CALL_EFFECTS, info)
++        elseif rt === Bottom || (isconcretetype(rt) && !iskindtype(rt))
+             # output cannot be improved so it is known for certain
+             return CallMeta(Const(rt), Union{}, RT_CALL_EFFECTS, info)
+         elseif isa(sv, InferenceState) && !isempty(sv.pclimitations)
+diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
+index 0cdb6db13908ab4d4c1f3e0c0a6e9012df8c2748..f848f67dcabd17de30cbbbdf3c68e65ac73b3cac 100644
+--- a/Compiler/test/inference.jl
++++ b/Compiler/test/inference.jl
+@@ -6394,3 +6394,21 @@ issue63351(c, xs) = c ? (1, :a, xs...) : (2, :a, xs...)
+     @test Base.infer_return_type(issue63351, (Bool, Vector{Any})) == Tuple{Int, Symbol, Vararg{Any}}
+     @test issue63351(true, Any[3]) === (1, :a, 3)
+ end
++
++# `return_type_tfunc` must not fold a provisional `Bottom` bestguess from a frame in
++# the currently-active cycle into `Const(Union{})`: the reified bottom cannot be
++# retracted by the join-based fixed-point state once the callee converges to a
++# non-`Bottom` type, leaving spurious `Vector{Union{}}`-like components in the final
++# result depending on which specialization happened to be inferred first.
++struct TreeRTCycle
++    children::Union{Nothing,Vector{TreeRTCycle}}
++end
++frec_rt_cycle(t::TreeRTCycle) =
++    TreeRTCycle(t.children === nothing ? nothing : map(frec_rt_cycle, t.children))
++# Compile `frec_rt_cycle` as the entry first via an actual call: the
++# `Base._return_type` query inside the `map` machinery then runs while
++# `frec_rt_cycle`'s bestguess is still `Union{}`.
++@test frec_rt_cycle(TreeRTCycle(nothing)) isa TreeRTCycle
++let rt = only(Base.return_types(map, (typeof(frec_rt_cycle), Vector{TreeRTCycle})))
++    @test !any(T -> T === Vector{Union{}}, Compiler.uniontypes(rt))
++end

@@ -478,11 +478,7 @@ end
                 binding.name == "x" && binding.kind === :local && any(o->o.kind===:use, occurrences)
             end
         end
-        # `` `...` `` parses to `Core.@cmd(LineNumberNode, CmdString)` whose
-        # `CmdString` leaf has no JuliaLowering rule. `is_cmd0` lets the macro
-        # expand instead of stripping, so names interpolated with `\$` end up
-        # as `:use` occurrences. Their source provenance collapses to 0:0 but
-        # usedness tracking is correct.
+        # aviatesk/JETLS.jl#1052
         with_binding_occurrences("""
             function func(x)
                 y = 2
@@ -494,18 +490,15 @@ end
                 occurrences = collect(binding_occurrences[binfos[i]])
                 x_use = findfirst(o->o.kind===:use, occurrences)
                 @test !isnothing(x_use)
-                # Old-style `@cmd` expansion collapses source provenance of
-                # interpolated uses to byte-range 0:0, which breaks
-                # source-position based features (rename/references). A proper
-                # fix needs upstream parser/lowering support for cmd-literal
-                # interpolations.
-                @test_broken JS.first_byte(occurrences[x_use].tree) > 0
+                @test JS.sourcetext(occurrences[x_use].tree) == "x"
+                @test JS.source_location(occurrences[x_use].tree) == (3, 12)
             end
             let i = @something findfirst(b->b.name=="y" && b.kind===:local, binfos)
                 occurrences = collect(binding_occurrences[binfos[i]])
                 y_use = findfirst(o->o.kind===:use, occurrences)
                 @test !isnothing(y_use)
-                @test_broken JS.first_byte(occurrences[y_use].tree) > 0
+                @test JS.sourcetext(occurrences[y_use].tree) == "y"
+                @test JS.source_location(occurrences[y_use].tree) == (3, 20)
             end
         end
     end

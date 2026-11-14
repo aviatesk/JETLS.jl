@@ -1,4 +1,4 @@
-const newly_inferred = Core.CodeInstance[]   # only used to support verbose[]
+const newly_inferred = Any[]   # only used to support verbose[]; the runtime requires a Vector{Any}
 
 function workload_enabled(mod::Module)
     enabled || return false
@@ -11,27 +11,64 @@ end
 
 @noinline is_generating_output() = ccall(:jl_generating_output, Cint, ()) == 1
 
+# The internals used below changed during Julia 1.12 development. If one is missing, as can
+# happen when bisecting Julia, the workload still runs but its callees may not be cached.
 macro latestworld_if_toplevel()
+    isdefined(Core, Symbol("@latestworld")) || return nothing
     Expr(Symbol("latestworld-if-toplevel"))
 end
 
 function tag_newly_inferred_enable()
-    ccall(:jl_tag_newly_inferred_enable, Cvoid, ())
+    try
+        ccall(:jl_tag_newly_inferred_enable, Cvoid, ())
+    catch err
+        @warn "PrecompileTools does not support this Julia build, so workloads may not be fully precompiled" exception=err maxlog=1
+        return nothing
+    end
     if !Base.generating_output()   # for verbose[]
         ccall(:jl_set_newly_inferred, Cvoid, (Any,), newly_inferred)
     end
 end
 function tag_newly_inferred_disable()
-    ccall(:jl_tag_newly_inferred_disable, Cvoid, ())
+    try
+        ccall(:jl_tag_newly_inferred_disable, Cvoid, ())
+    catch
+        return nothing   # enabling failed too, and already warned
+    end
     if !Base.generating_output()   # for verbose[]
         ccall(:jl_set_newly_inferred, Cvoid, (Any,), nothing)
     end
     if verbose[]
         for ci in newly_inferred
+            ci isa Core.CodeInstance || continue
             println(ci.def)
         end
     end
     return nothing
+end
+
+function print_timed(t0::UInt64, label::String)
+    println(lpad(round(Int, (time_ns() - t0) / 1e6), 8), " ms  ", label)
+end
+
+function statement_label(@nospecialize(arg))
+    lines = split(string(arg isa Expr ? Base.remove_linenums!(copy(arg)) : arg), '\n')
+    return length(lines) == 1 ? String(lines[1]) : string(rstrip(lines[1]), " …")
+end
+
+# wrap each top-level statement of a workload so its time is printed after it runs
+function time_statements(ex::Expr)
+    ex.head === :block || return ex
+    t0 = gensym("t0")
+    args = Any[]
+    for arg in ex.args
+        if arg isa LineNumberNode
+            push!(args, arg)
+        else
+            push!(args, :($t0 = time_ns()), arg, :($print_timed($t0, $(statement_label(arg)))))
+        end
+    end
+    return Expr(:block, args...)
 end
 
 """
@@ -64,10 +101,16 @@ end
 """
 macro compile_workload(ex::Expr)
     local iscompiling = :($PrecompileTools.is_generating_output() && $PrecompileTools.workload_enabled(@__MODULE__))
+    # the workload runs in the process that expands it, so the variable can be read here
+    if Base.get_bool_env("PRECOMPILETOOLS_TIMING", false)
+        ex = :(@time $(string(__module__, " @compile_workload")) $(esc(time_statements(ex))))
+    else
+        ex = esc(ex)
+    end
     ex = quote
         begin
             $PrecompileTools.@latestworld_if_toplevel  # block inference from proceeding beyond this point (xref https://github.com/JuliaLang/julia/issues/57957)
-            $(esc(ex))
+            $ex
         end
     end
     ex = quote

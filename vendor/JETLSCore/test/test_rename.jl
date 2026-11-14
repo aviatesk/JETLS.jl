@@ -391,6 +391,50 @@ end
         end
     end
 
+    # aviatesk/JETLS.jl#1052
+    @testset "rename with cmd literal or lazy string" begin
+        for (code, n) in (
+                """
+                func(│xxx│) = `echo \$│xxx│ --flag=\$(│xxx│)`
+                """ => 6,
+                # a cmd literal nested in a dedented one
+                """
+                func(│xxx│) = ```
+                    echo \$(read(`git log \\
+                        --format=\$│xxx│`, String))
+                    ```
+                """ => 4,
+                # a cmd literal in the arguments of a macro call in an interpolation
+                """
+                func(│xxx│) = ```
+                    echo \$(read(@static(Sys.isunix() ?
+                        `git log \\
+                            --format=\$│xxx│` : `cmd /c echo fallback`), String))
+                    ```
+                """ => 4,
+                # a lazy string dedented by less than the indentation of its last line
+                """
+                func(│xxx│) = lazy\"\"\"value:
+                    \$│xxx│\"\"\"
+                """ => 4,
+                # a lazy string nested in another with escaped quotes
+                """
+                func(│xxx│) = lazy"value: \$(lazy\\"nested \$│xxx│\\")"
+                """ => 4,
+            )
+            (; fi, positions, furi, rename_binding) = local_rename_testcase(server, code, n, @__MODULE__)
+            renamed = replace(JETLSCore.document_text(fi), "xxx" => "yyy")
+            for pos in positions
+                (; result, error) = rename_binding(pos, "yyy")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test apply_edits(fi, edits) == renamed
+                end
+            end
+        end
+    end
+
     @testset "rename across @static branches" begin
         # A use in a `@static` branch not selected for the current platform must be
         # renamed too — otherwise the rename leaves that branch referring to the old name,
@@ -671,6 +715,17 @@ end
             @test !isnothing(rename_prep)
             @test rename_prep.placeholder == "my macro"
             @test rename_prep.range == Range(; start=positions[1], var"end"=positions[2])
+        end
+
+        # The name of the macro that a literal is parsed to is not written in the source
+        let code = """
+            cmd = `ec│ho hello`
+            int = 1701411834604692317316873037158841057│28
+            """
+            (; positions, prepare) = global_rename_preparation_testcase(state, code, 2, @__MODULE__)
+            for pos in positions
+                @test isnothing(prepare(pos))
+            end
         end
     end
 end

@@ -1,8 +1,8 @@
 name = "JETLSCore"
-JuliaSyntax = "avi/base-syntax-2026-11-02"
+JuliaSyntax = "avi/base-syntax-2026-11-09"
 version = "0.1.0"
-JET = "avi/JET-JETLS-head-2026-10-24+update-1.14"
-JuliaLowering = "avi/base-syntax-2026-11-02"
+JET = "avi/JET-JETLS-head-2026-11-05"
+JuliaLowering = "avi/base-syntax-2026-11-09"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 BaseSyntax = "avi/base-syntax-2026-11-02"
 uuid = "8d6afe4c-923b-5912-b63d-b990009c9e74"
@@ -30,57 +30,57 @@ BaseSyntax = "0.1"
 
 [sources.JuliaSyntax]
 subdir = "vendor/JuliaSyntax"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Glob]
 subdir = "vendor/Glob"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.TOMLSource]
 subdir = "vendor/TOMLSource"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Compiler]
 subdir = "vendor/Compiler"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JET]
 subdir = "vendor/JET"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LSP]
 subdir = "vendor/LSP"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.TestRunner]
 subdir = "vendor/TestRunner"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaLowering]
 subdir = "vendor/JuliaLowering"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.BaseSyntax]
 subdir = "vendor/BaseSyntax"
-rev = "e0ec2bc1ba2794274487d45c4e1d21b4960dff33"
+rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [deps]
