@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 <!-- Added: 2026-10-26 / Remove after: 2026-11-26 -->
 > [!tip]
-> JETLS runs noticeably faster on Julia 1.14 than on Julia 1.13, and even faster on the [optimized builds of Julia 1.14](https://discourse.julialang.org/t/julia-v1-14-0-alpha1-is-now-available/140136#p-648514-new-optimized-and-assertion-builds-experimental-1), which juliaup provides as the `+opt` channels:
+> JETLS runs noticeably faster on Julia 1.14 than on Julia 1.13, and even faster on the [optimized builds of Julia 1.14](https://discourse.julialang.org/t/julia-v1-14-0-beta1-is-now-available/142934#p-651784-optimized-and-assertion-builds-experimental-1), which juliaup provides as the `+opt` channels:
 > for example, on an optimized build, `jetls check` takes about _14%_ less time on the JETLS repository ([scripts/selfcheck.sh](https://github.com/aviatesk/JETLS.jl/blob/master/scripts/selfcheck.sh)), and _35–50%_ less on mid-sized packages such as [JSON3.jl](https://github.com/quinnj/JSON3.jl), [DataStructures.jl](https://github.com/JuliaCollections/DataStructures.jl) and [Graphs.jl](https://github.com/JuliaGraphs/Graphs.jl).
 > See [Prerequisites](https://aviatesk.github.io/JETLS.jl/release/#index/server-installation/prerequisites) for how to run `jetls` on one.
 
