@@ -2138,6 +2138,128 @@ float_or_string(::Union{Float64,String}) = nothing
     end
 end
 
+struct SpecificFlags end
+apply_specific(f, ::SpecificFlags) = f(false)
+apply_specific(f, xs) = foreach(f, xs)
+apply_specific_or_skip(f, ::SpecificFlags) = f(false)
+apply_specific_or_skip(f, xs) = nothing
+apply_specific_only(f, ::SpecificFlags) = f(false)
+apply_specific_n(f, ::SpecificFlags, ::Int) = f(false)
+apply_specific_n(f, xs, n) = foreach(f, xs)
+apply_specific_va(f, ::SpecificFlags, rest...) = f(false)
+apply_specific_va(f, xs, rest...) = nothing
+apply_specific_same(f, x::T, y::T) where T = f(false)
+apply_specific_same(f, x, y) = nothing
+apply_specific_same_int(f, a::T, b::T, ::SpecificFlags) where {T<:Integer} = f(false)
+apply_specific_same_int(f, a, b, x) = nothing
+apply_specific_two(f, x::SpecificFlags, y::SpecificFlags) = f(false)
+apply_specific_two(f, xs...) = nothing
+apply_specific_none(f) = f(false)
+apply_specific_none(f, xs...) = nothing
+Base.@nospecializeinfer apply_specific_nospec(f, @nospecialize(x::Vector), ::Bool) = f(false)
+apply_specific_nospec(f, x, y) = nothing
+Base.@nospecializeinfer apply_specific_nospec_splat(
+    f, @nospecialize(z), @nospecialize(x::Vector), ::Bool) = f(false)
+apply_specific_nospec_splat(f, z, x, y) = nothing
+apply_specific_ints(f, x::Int, y::Int) = f(false)
+apply_specific_ints(f, x, y) = nothing
+apply_specific_ints_const(f, x::Int, y::Int, n) = n == 1 ? f(false) : nothing
+apply_specific_ints_const(f, x, y, n) = nothing
+apply_specific_const(f, ::SpecificFlags, ::Int) = f(false)
+apply_specific_const(f, xs, n) = n == 1 && rand(Bool) ? sin("julia") : nothing
+get_a(x) = x.a
+
+last_argument_error(stack) = findlast(x -> x.exception isa ArgumentError, stack)
+first_argument_error(stack) = findfirst(x -> x.exception isa ArgumentError, stack)
+specific_get_a(xs) = apply_specific(x -> x.a, xs)
+specific_get_a_named(xs) = apply_specific(get_a, xs)
+specific_get_a_any(d::Dict{String,Any}) = apply_specific(x -> x.a, d["key"])
+specific_sin(xs) = apply_specific_or_skip(x -> sin("julia"), xs)
+fallback_sin(xs) = apply_specific(x -> sin("julia"), xs)
+last_argument_error_vec(stack::AbstractVector) =
+    findlast(x -> x.exception isa ArgumentError, stack)
+function last_argument_error_isa(stack)
+    stack isa AbstractVector || return nothing
+    return findlast(x -> x.exception isa ArgumentError, stack)
+end
+specific_only_get_a(xs) = apply_specific_only(x -> x.a, xs)
+specific_get_a_n(xs, n::Integer) = apply_specific_n(x -> x.a, xs, n)
+specific_get_a_va(xs, rest...) = apply_specific_va(x -> x.a, xs, rest...)
+specific_get_a_same(x, y) = apply_specific_same(z -> z.a, x, y)
+specific_get_a_same_int(a::Integer, b::Integer, x) =
+    apply_specific_same_int(z -> z.a, a, b, x)
+specific_get_a_two(xs...) = apply_specific_two(x -> x.a, xs...)
+specific_get_a_none(xs...) = apply_specific_none(x -> x.a, xs...)
+specific_get_a_nospec(x::Union{Vector,AbstractVector{Int}}, y) =
+    apply_specific_nospec(z -> z.a, x, y)
+function specific_get_a_nospec_splat(
+        args::Union{Tuple{Int,AbstractVector{Int},Any},Tuple{String,Any,Any}})
+    return apply_specific_nospec_splat(z -> z.a, args...)
+end
+specific_get_a_nospec_any(x::Vector, y) = apply_specific_nospec(z -> z.a, x, y)
+specific_get_a_splat(args::Union{Tuple{Int,Any},Tuple{Any,Integer}}) =
+    apply_specific_ints(z -> z.a, args...)
+specific_get_a_splat_const(args::Union{Tuple{Int,Any},Tuple{Any,Integer}}) =
+    apply_specific_ints_const(z -> z.a, args..., 1)
+function specific_get_a_loop(xs)
+    acc = 0
+    for _ in 1:3
+        apply_specific_const(x -> x.a, xs, 1)
+        acc += 0.5
+    end
+    return acc
+end
+
+@testset "reports through matches specific to `Any` arguments" begin
+    # `findlast` follows `findprev(::Function, ::BitArray, ::Integer)` for `stack::Any`,
+    # which calls the predicate with `Bool`s
+    for f in (last_argument_error, first_argument_error,
+              specific_get_a, specific_get_a_named, specific_get_a_any,
+              # `Vararg{Any}` arguments, also narrowed to more or no arguments, and type
+              # variables that only `Any` arguments share
+              specific_get_a_va, specific_get_a_two, specific_get_a_none,
+              specific_get_a_same,
+              # a `@nospecializeinfer` method
+              specific_get_a_nospec_any)
+        @test isempty(analyze_signature(f))
+    end
+    # including errors in a closure that only such matches call
+    @test isempty(analyze_signature(specific_sin))
+
+    # call-site inference with the actual argument types still reports them
+    let r = only(get_reports(analyze_call(last_argument_error, (BitVector,))))
+        @test r isa FieldErrorReport && r.type === Bool && r.field === :exception
+    end
+    let r = only(get_reports(analyze_call(specific_get_a, (SpecificFlags,))))
+        @test r isa FieldErrorReport && r.type === Bool && r.field === :a
+    end
+    # so does a fully covering match calling the closure
+    @test only(analyze_signature(fallback_sin)) isa NoMethodMatchReport
+    # also when the call is inferred again in a loop, where constant propagation for the
+    # fully covering match replaces its report of the previous inference
+    @test only(analyze_signature(specific_get_a_loop)) isa NoMethodMatchReport
+
+    # matches narrowing arguments of known types, including declared ones
+    for f in (last_argument_error_vec, last_argument_error_isa)
+        r = only(analyze_signature(f))
+        @test r isa FieldErrorReport && r.type === Bool && r.field === :exception
+    end
+    for f in (specific_get_a_n, specific_get_a_same_int,
+              # speculative matches of another union split or splatted tuple type sharing
+              # the `MethodInstance`, e.g. of a `@nospecializeinfer` method
+              specific_get_a_nospec, specific_get_a_nospec_splat, specific_get_a_splat,
+              # also when constant propagation for the speculative match drops the report
+              # of the other branch
+              specific_get_a_splat_const)
+        r = only(analyze_signature(f))
+        @test r isa FieldErrorReport && r.type === Bool && r.field === :a
+    end
+    # every call not throwing `MethodError` goes through a match without a fully covering one
+    let r = only(analyze_signature(specific_only_get_a))
+        @test r isa FieldErrorReport && r.type === Bool && r.field === :a
+    end
+end
+
 function analyze_test_text(text::String; jetconfigs...)
     interp = JET.JETConcreteInterpreter(LSAnalyzer(; report_target_modules=nothing))
     result = JET.analyze_and_report_text!(interp, text; jetconfigs...)
