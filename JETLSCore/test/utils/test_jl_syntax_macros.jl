@@ -770,6 +770,36 @@ end
             @test String(ls) == "$file $(line + 1)"
         end
     end
+
+    # `lazy"..."c` is only supported by some Julia versions
+    @testset "flags" begin
+        code = "let x = 1.23456789; lazy\"x = \$x\"c; end"
+        native = try
+            Core.eval(lowering_module, Meta.parse(code))
+        catch
+            nothing
+        end
+        if native === nothing
+            diags = collect_macro_diagnostics() do
+                jlexpand(code)
+            end
+            @test length(diags) == 1
+        else
+            diags = collect_macro_diagnostics() do
+                @test String(jleval(code)) == String(native) == "x = 1.23457"
+            end
+            @test isempty(diags)
+            let code = "lazyfunc() = lazy\"value \$key\"c"
+                res = jlresolve(code)
+                assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
+            end
+            diags = collect_macro_diagnostics() do
+                jlexpand("lazy\"value\"d")
+            end
+            @test length(diags) == 1
+            @test occursin("unknown lazy-string flag", only(diags).msg)
+        end
+    end
 end
 
 native_cmd(code::AbstractString) = Core.eval(lowering_module, Meta.parse(code))

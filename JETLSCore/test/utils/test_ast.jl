@@ -608,6 +608,7 @@ end
             "lazy\"\"\"\r\n    value\r\n    \$key\r\n    \"\"\"",
             "lazy\"value\\\\\\\"\$key\"",
             "Base.lazy\"value \$key\"",
+            "lazy\"value \$key\"c",
             # nested literals
             "lazy\"value \$(lazy\\\"nested \$key\\\")\"",
             "lazy\"value \$(`echo \$key`)\"",

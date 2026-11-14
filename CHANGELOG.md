@@ -100,6 +100,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed identifiers interpolated into `lazy"..."` strings being mislocated in some forms, where find-references and document-highlight pointed at other parts of the string or of the file, and rename edited those.
   This happened in triple-quoted strings whose closing `"""` is on a line with content or is indented deeper than the content, with CRLF line endings, after backslashes before an escaped quote, and for names within a macro call in an interpolation, such as `n` in `lazy"$(@time(string(n)))"`.
 
+- Fixed `lazy"..."c`, the compact form of lazy strings added in Julia 1.14, being reported as a macro expansion error, with the names interpolated into it reported as unused.
+
 ## 2026-11-04
 
 - Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)

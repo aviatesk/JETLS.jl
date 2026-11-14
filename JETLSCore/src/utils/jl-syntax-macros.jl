@@ -383,10 +383,25 @@ end
 
 # New-style implementation of `Base.@lazy_str`, where every `$` interpolates
 function Base.var"@lazy_str"(__context__::BS.MacroContext, text::SyntaxTree)
-    mc = __context__.macrocall
+    return _lazy_str_expand(__context__, text, false)
+end
+
+# The flag of `lazy"..."c`, which Julia 1.14 added
+const _LAZY_STR_ACCEPTS_FLAGS = hasmethod(Base.var"@lazy_str", Tuple{LineNumberNode,Module,Any,Any})
+
+@static if _LAZY_STR_ACCEPTS_FLAGS
+function Base.var"@lazy_str"(__context__::BS.MacroContext, text::SyntaxTree, flag::SyntaxTree)
+    compact = JS.head(flag) === :value && flag.value === "c"
+    compact || push_macro_error!(flag, "`@lazy_str`: unknown lazy-string flag")
+    return _lazy_str_expand(__context__, text, compact)
+end
+end
+
+function _lazy_str_expand(ctx::BS.MacroContext, text::SyntaxTree, compact::Bool)
+    mc = ctx.macrocall
     if !(JS.head(text) === :value && text.value isa String)
         push_macro_error!(text, "`@lazy_str` expects a string literal")
-        return JL.@ast(__context__, mc, text)
+        return JL.@ast(ctx, mc, text)
     end
     lit = InterpolatedLiteral(text, false, mc.context)
     interps, errmsg = _interpolations(lit, nothing)
@@ -399,13 +414,19 @@ function Base.var"@lazy_str"(__context__::BS.MacroContext, text::SyntaxTree)
         lastidx = last(range) + 1
     end
     _lazy_str_push_literal!(parts, lit, lastidx, ncodeunits(lit.value))
-    src = _macro_generated_source(__context__)
-    return JL.@ast(__context__, src, [:call [:top "LazyString"::identifier] parts...])
+    src = _macro_generated_source(ctx)
+    compact || return JL.@ast(ctx, src, [:call [:top "LazyString"::identifier] parts...])
+    return JL.@ast(ctx, src, [:call
+        [:top "LazyString"::identifier]
+        [:parameters [:kw "compact"::identifier true::value]]
+        parts...])
 end
 
 function Base.var"@lazy_str"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall
-    push_macro_error!(mc, "`@lazy_str` expects exactly one string argument")
+    push_macro_error!(mc, _LAZY_STR_ACCEPTS_FLAGS ?
+        "`@lazy_str` expects one or two arguments: `text [flag]`" :
+        "`@lazy_str` expects exactly one string argument")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
