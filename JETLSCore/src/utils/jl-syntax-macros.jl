@@ -155,7 +155,8 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Base => Symbol("@locals"),
     Base => Symbol("@noinline"),
     Base => Symbol("@nospecialize"),
-    # src/utils/jl-syntax-macros.jl, except the `@atomic` macros and `@cmd` (see their stubs)
+    # src/utils/jl-syntax-macros.jl, except the `@atomic` macros, `@cmd`, and `@lazy_str`
+    # (see their stubs)
     Core => Symbol("@doc"),
     Base => Symbol("@assert"),
     Base => Symbol("@assume_effects"),
@@ -164,7 +165,6 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Base => Symbol("@invokelatest"),
     Base => Symbol("@Kwargs"),
     Base => Symbol("@kwdef"),
-    Base => Symbol("@lazy_str"),
     Base => Symbol("@lock"),
     Base => Symbol("@NamedTuple"),
     Base => Symbol("@propagate_inbounds"),
@@ -349,237 +349,126 @@ function Base.var"@something"(__context__::BS.MacroContext, args::SyntaxTree...)
     return expr
 end
 
-# New-style implementation of `Base.@lazy_str`. Surface string macros arrive as
-# string literals with their source text, while string macros nested inside old-style
-# macro expansions arrive as synthesized `:value` strings. In both cases `$`
-# interpolations are not parsed into child nodes yet. Mirror Base's `Meta.parseatom`
-# loop using JuliaSyntax, then copy each parsed interpolation back into the macro
-# context with source ranges remapped when source text is available and scope adopted
-# from the call site.
+# A cmd literal and a `lazy"..."` string are parsed to calls of `Core.@cmd` and
+# `Base.@lazy_str` with their `$` interpolations left unparsed in a string. Base's macros
+# parse them out of it, which leaves them with line-level provenance only, so the
+# new-style implementations below parse them with JuliaSyntax instead and give them their
+# source ranges.
+#
+# Neither macro is listed in `NEW_STYLE_MACRO_BINDINGS`, so that `remove_macrocalls` still
+# replaces these literals (see `strip_interpolated_literal`) and the explicit calls of
+# the macros, whose strings are escaped differently and whose interpolations can only be
+# attributed to them as a whole.
+struct InterpolatedLiteral
+    text::SyntaxTree
+    value::String
+    # The byte of the source file that each byte index of `value`, and the index past its
+    # end, was unescaped from, or `nothing` for a literal that isn't located that precisely
+    source_map::Union{Nothing,Vector{Int}}
+    is_cmd::Bool
+    # The context of the literal, which its interpolations are copied into
+    context::BS.SyntaxContext
+end
+
+function InterpolatedLiteral(text::SyntaxTree, is_cmd::Bool, context::BS.SyntaxContext)
+    value = text.value::String
+    return InterpolatedLiteral(text, value, _literal_source_map(text, value, is_cmd), is_cmd, context)
+end
+
+# The module and the world age that `remove_macrocalls` resolves macros in
+struct MacroResolver
+    context_module::Union{Nothing,Module}
+    world::UInt
+end
+
+# New-style implementation of `Base.@lazy_str`, where every `$` interpolates
 function Base.var"@lazy_str"(__context__::BS.MacroContext, text::SyntaxTree)
+    return _lazy_str_expand(__context__, text, false)
+end
+
+# The flag of `lazy"..."c`, which Julia 1.14 added
+const _LAZY_STR_ACCEPTS_FLAGS = hasmethod(Base.var"@lazy_str", Tuple{LineNumberNode,Module,Any,Any})
+
+@static if _LAZY_STR_ACCEPTS_FLAGS
+function Base.var"@lazy_str"(__context__::BS.MacroContext, text::SyntaxTree, flag::SyntaxTree)
+    compact = JS.head(flag) === :value && flag.value === "c"
+    compact || push_macro_error!(flag, "`@lazy_str`: unknown lazy-string flag")
+    return _lazy_str_expand(__context__, text, compact)
+end
+end
+
+function _lazy_str_expand(ctx::BS.MacroContext, text::SyntaxTree, compact::Bool)
+    mc = ctx.macrocall
     if !(JS.head(text) === :value && text.value isa String)
         push_macro_error!(text, "`@lazy_str` expects a string literal")
-        return JL.@ast(__context__, __context__.macrocall, text)
+        return JL.@ast(ctx, mc, text)
     end
-    value = text.value::String
-    quoted = !is_synthesized_value(text)
-    raw = quoted ? String(JS.sourcetext(text)) : value
-    source_map = _lazy_str_source_map(value, raw; quoted)
-    parts = _lazy_str_parts(__context__, text, value, source_map)
-    src = _macro_generated_source(__context__)
-    return JL.@ast(__context__, src,
-        [:call [:top "LazyString"::identifier] parts...])
+    lit = InterpolatedLiteral(text, false, mc.context)
+    interps, errmsg = _interpolations(lit, nothing)
+    errmsg === nothing || push_macro_error!(text, "`@lazy_str`: $errmsg")
+    parts = SyntaxList()
+    lastidx = firstindex(lit.value)
+    for (range, ex) in interps
+        _lazy_str_push_literal!(parts, lit, lastidx, first(range) - 2)
+        push!(parts, ex)
+        lastidx = last(range) + 1
+    end
+    _lazy_str_push_literal!(parts, lit, lastidx, ncodeunits(lit.value))
+    src = _macro_generated_source(ctx)
+    compact || return JL.@ast(ctx, src, [:call [:top "LazyString"::identifier] parts...])
+    return JL.@ast(ctx, src, [:call
+        [:top "LazyString"::identifier]
+        [:parameters [:kw "compact"::identifier true::value]]
+        parts...])
 end
 
 function Base.var"@lazy_str"(__context__::BS.MacroContext, args::SyntaxTree...)
     mc = __context__.macrocall
-    push_macro_error!(mc, "`@lazy_str` expects exactly one string argument")
+    push_macro_error!(mc, _LAZY_STR_ACCEPTS_FLAGS ?
+        "`@lazy_str` expects one or two arguments: `text [flag]`" :
+        "`@lazy_str` expects exactly one string argument")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
 end
 
-function _lazy_str_parts(
-        ctx::BS.MacroContext, text::SyntaxTree, value::String, source_map::Dict{Int,Int}
+function _lazy_str_push_literal!(
+        parts::SyntaxList, lit::InterpolatedLiteral, startidx::Int, stopbyte::Int
     )
-    parts = SyntaxTree[]
-    isempty(value) && return parts
-    lastidx = idx = firstindex(value)
+    startidx <= stopbyte || return parts
+    (; text, value) = lit
+    part = value[startidx:thisind(value, stopbyte)]
+    srcref = _literal_source(lit, startidx, stopbyte)
+    return push!(parts, SyntaxTree(:value, nothing, part, srcref, text.context))
+end
+
+function _lazy_str_interpolations(lit::InterpolatedLiteral, strip::Union{Nothing,MacroResolver})
+    (; value) = lit
+    interps = Pair{UnitRange{Int},SyntaxTree}[]
+    idx = firstindex(value)
     while true
-        dollar = findnext('$', value, idx)
-        dollar === nothing && break
-        if lastidx < dollar
-            push!(parts, _lazy_str_literal_part(text, value, source_map, lastidx, prevind(value, dollar)))
-        end
-        atom_start = nextind(value, dollar)
-        if atom_start > lastindex(value)
-            push_macro_error!(text, "`@lazy_str`: invalid interpolation")
-            push!(parts, _lazy_str_literal_part(text, value, source_map, dollar, lastindex(value)))
-            return parts
-        end
-        parsed, nextidx = @something _lazy_str_parse_interpolation(
-            ctx, text, value, source_map, atom_start) begin
-            push!(parts, _lazy_str_literal_part(text, value, source_map, dollar, lastindex(value)))
-            return parts
-        end
-        push!(parts, parsed)
-        lastidx = idx = nextidx
+        dollar = @something findnext('$', value, idx) break
+        dollar < ncodeunits(value) || return interps, "invalid interpolation"
+        afteridx = _parse_interpolation!(interps, lit, strip, dollar + 1)
+        afteridx isa String && return interps, afteridx
+        idx = afteridx
     end
-    if lastidx <= lastindex(value)
-        push!(parts, _lazy_str_literal_part(text, value, source_map, lastidx, lastindex(value)))
-    end
-    return parts
+    return interps, nothing
 end
 
-function _lazy_str_source_map(value::String, raw::String; quoted::Bool)
-    if quoted && startswith(raw, "\"\"\"") && endswith(raw, "\"\"\"")
-        return _lazy_str_triple_source_map(value, raw)
-    end
-    raw_start = quoted ? nextind(raw, firstindex(raw)) : firstindex(raw)
-    return _lazy_str_linear_source_map(value, raw, raw_start)
-end
-
-function _lazy_str_linear_source_map(value::String, raw::String, ri::Int)
-    value_to_raw = Dict{Int,Int}()
-    vi = firstindex(value)
-    value_to_raw[vi] = ri
-    while vi <= lastindex(value) && ri <= lastindex(raw)
-        vi, ri = _lazy_str_step_source_map!(value_to_raw, value, raw, vi, ri)
-    end
-    return value_to_raw
-end
-
-function _lazy_str_triple_source_map(value::String, raw::String)
-    value_to_raw = Dict{Int,Int}()
-    vi = firstindex(value)
-    ri = nextind(raw, firstindex(raw), 3)
-    closing = prevind(raw, lastindex(raw), 2)
-    payload_end = prevind(raw, closing)
-    if ri <= payload_end && raw[ri] == '\n'
-        ri = nextind(raw, ri)
-    elseif ri <= payload_end && raw[ri] == '\r'
-        ri_next = nextind(raw, ri)
-        if ri_next <= payload_end && raw[ri_next] == '\n'
-            ri = nextind(raw, ri_next)
-        end
-    end
-    indent = _lazy_str_closing_indent(raw, closing)
-    value_to_raw[vi] = _lazy_str_skip_dedent(raw, ri, payload_end, indent)
-    ri = value_to_raw[vi]
-    while vi <= lastindex(value) && ri <= payload_end
-        ri = _lazy_str_skip_dedent(raw, ri, payload_end, indent)
-        value_to_raw[vi] = ri
-        ri <= payload_end || break
-        vi, ri = _lazy_str_step_source_map!(value_to_raw, value, raw, vi, ri)
-    end
-    return value_to_raw
-end
-
-function _lazy_str_step_source_map!(
-        value_to_raw::Dict{Int,Int}, value::String, raw::String, vi::Int, ri::Int
-    )
-    vc = value[vi]
-    vi_next = nextind(value, vi)
-    ri_next = nextind(raw, ri)
-    if raw[ri] == vc
-        value_to_raw[vi_next] = ri_next
-    elseif raw[ri] == '\\' && ri_next <= lastindex(raw) && raw[ri_next] == vc
-        value_to_raw[vi_next] = nextind(raw, ri_next)
-    else
-        value_to_raw[vi_next] = ri_next
-    end
-    return vi_next, value_to_raw[vi_next]
-end
-
-function _lazy_str_closing_indent(raw::String, closing::Int)
-    line_start = closing
-    while line_start > firstindex(raw)
-        prev = prevind(raw, line_start)
-        raw[prev] == '\n' && break
-        line_start = prev
-    end
-    return raw[line_start:prevind(raw, closing)]
-end
-
-function _lazy_str_skip_dedent(
-        raw::String, ri::Int, payload_end::Int, indent::AbstractString
-    )
-    isempty(indent) && return ri
-    if ri > firstindex(raw) && raw[prevind(raw, ri)] != '\n'
-        return ri
-    end
-    i = ri
-    for c in indent
-        i <= payload_end && raw[i] == c || return ri
-        i = nextind(raw, i)
-    end
-    return i
-end
-
-function _lazy_str_literal_part(
-        text::SyntaxTree, value::String,
-        source_map::Dict{Int,Int}, startidx::Int, stopidx::Int
-    )
-    src = BS.sourceref(text)
-    srcref = src isa BS.SourceRef ?
-        _lazy_str_source_ref(text, src, value, source_map, startidx, stopidx) : text
-    return SyntaxTree(:value, nothing, value[startidx:stopidx], srcref, text.context)
-end
-
-function _lazy_str_parse_interpolation(
-        ctx::BS.MacroContext, text::SyntaxTree, value::String,
-        source_map::Dict{Int,Int}, idx::Int
-    )
-    parsed, nextidx = try
-        JS.parseatom(SyntaxTree, value, idx; ignore_errors=false)
-    catch err
-        msg = first(split(sprint(locked_showerror, err), '\n'))
-        push_macro_error!(text, "`@lazy_str`: failed to parse interpolation: $msg")
-        return nothing
-    end
-    src = BS.sourceref(text)
-    copied = if src isa BS.SourceRef
-        _lazy_str_copy_with_source(parsed, text, src, value, source_map)
-    else
-        parsed
-    end
-    # `adopt_scope` would keep the scope-less parse context's `unexpanded`, leaving
-    # interpolations from old-style macro output attributed to the parsed string
-    return BS.fill_context(copied, (ctx.macrocall::SyntaxTree).context), nextidx
-end
-
-function _lazy_str_copy_with_source(
-        node::SyntaxTree, text::SyntaxTree, src::BS.SourceRef,
-        value::String, source_map::Dict{Int,Int}
-    )
-    srcref = _lazy_str_source_ref(text, src, value, source_map, JS.first_byte(node), JS.last_byte(node))
-    children = if JS.is_leaf(node)
-        nothing
-    else
-        cs = SyntaxList()
-        for child in JS.children(node)
-            push!(cs, _lazy_str_copy_with_source(child, text, src, value, source_map))
-        end
-        cs
-    end
-    return BS.@mknode(node; source=srcref, children)
-end
-
-function _lazy_str_source_ref(
-        text::SyntaxTree, src::BS.SourceRef, value::String, source_map::Dict{Int,Int},
-        startidx::Int, stopbyte::Int
-    )
-    stopidx = thisind(value, stopbyte)
-    raw_start = get(source_map, startidx, startidx)
-    afteridx = nextind(value, stopidx)
-    raw_after = get(source_map, afteridx, afteridx)
-    first_byte = JS.first_byte(text) + raw_start - 1
-    last_byte = JS.first_byte(text) + raw_after - 2
-    return BS.SourceRef(src.code, UInt32(first_byte), UInt32(last_byte))
-end
-
-# New-style implementation of `Core.@cmd`, which cmd literals are parsed to. As with
-# `@lazy_str`, the `$` interpolations of the literal are not parsed into child nodes yet,
-# and Base's `shell_parse` parses them out of the string, which leaves them with
-# line-level provenance only. They are instead parsed here and given their source ranges.
-# The rest of the command syntax depends on the Julia version (e.g. pipelines and
-# redirections), so it is still left to `shell_parse`: the command is parsed with a
-# placeholder in place of each interpolation, and the placeholders in the result are then
-# replaced with the interpolations.
-#
-# This is not listed in `NEW_STYLE_MACRO_BINDINGS`, so that `remove_macrocalls` still
-# replaces cmd literals (see `strip_cmd_literal`) and explicit `@cmd` calls, whose
-# interpolations can only be attributed to their string as a whole.
+# New-style implementation of `Core.@cmd`. The command syntax around the interpolations
+# depends on the Julia version (e.g. pipelines and redirections), so it is left to Base's
+# `shell_parse`: the command is parsed with a placeholder in place of each interpolation,
+# and the placeholders in the result are then replaced with the interpolations.
 function Core.var"@cmd"(__context__::BS.MacroContext, text::SyntaxTree)
     mc = __context__.macrocall
     if !(JS.head(text) === :value && text.value isa String)
         push_macro_error!(text, "`@cmd` expects a string literal")
         return JL.@ast(__context__, mc, text)
     end
-    value = text.value::String
-    interps, errmsg = _cmd_interpolations(
-        text, value, _cmd_literal_source_map(text, value), mc.context, false)
+    lit = InterpolatedLiteral(text, true, mc.context)
+    interps, errmsg = _interpolations(lit, nothing)
     parsed = if errmsg === nothing
-        _cmd_parse(text, value, interps)
+        _cmd_parse(lit, interps)
     else
         push_macro_error!(text, "`@cmd`: $errmsg")
         nothing
@@ -587,7 +476,7 @@ function Core.var"@cmd"(__context__::BS.MacroContext, text::SyntaxTree)
     src = _macro_generated_source(__context__)
     if parsed === nothing
         # Recovery: keep the interpolations analyzed, and the result a `Cmd`.
-        exs = _cmd_interpolation_tuples(interps)
+        exs = _interpolation_tuples(interps)
         return JL.@ast(__context__, src, [:block
             exs...
             [:call [:top "cmd_gen"::identifier] [:tuple [:tuple]]]])
@@ -605,34 +494,46 @@ function Core.var"@cmd"(__context__::BS.MacroContext, args::SyntaxTree...)
     return JL.@ast(__context__, mc, [:block args...])
 end
 
-# Replace the cmd literal `st0` with a `block` of its interpolations, or return `nothing`
-# if it has none. Nested cmd literals are replaced as well, since one written with escaped
-# backticks or across dedented lines can't be located from its own source text.
-function strip_cmd_literal(st0::SyntaxTree)
-    text = @something _cmd_literal_text(st0) return nothing
-    value = text.value::String
-    '$' in value || return nothing
-    return _cmd_strip(st0, text, value, _cmd_literal_source_map(text, value))
-end
-
-function _cmd_literal_text(st0::SyntaxTree)
-    (is_cmd0(st0) && JS.numchildren(st0) == 3) || return nothing
-    text = st0[3]
-    return JS.head(text) === :value && text.value isa String ? text : nothing
-end
-
-function _cmd_strip(
-        st0::SyntaxTree, text::SyntaxTree, value::String,
-        source_map::Union{Nothing,Vector{Int}}
+# Replace `st0` with a `block` of its interpolations if it is a cmd literal or a
+# `lazy"..."` string, or return `st0` itself if it has no interpolation, and `nothing` if
+# it isn't such a literal. The literals nested in the interpolations are replaced as well,
+# since one written with escaped delimiters or across dedented lines can't be located
+# from its own source text.
+function strip_interpolated_literal(
+        context_module::Union{Nothing,Module}, world::UInt, st0::SyntaxTree
     )
-    interps, _ = _cmd_interpolations(text, value, source_map, st0.context, true)
+    resolver = MacroResolver(context_module, world)
+    is_cmd = @something _interpolated_literal_kind(resolver, st0) return nothing
+    text = st0[3]
+    '$' in text.value::String || return st0
+    lit = InterpolatedLiteral(text, is_cmd, st0.context)
+    return @something _strip_literal(st0, lit, resolver) st0
+end
+
+# Whether `st0` is a cmd literal (`true`) or a `lazy"..."` string (`false`), or `nothing`
+# if it is neither
+function _interpolated_literal_kind(resolver::MacroResolver, st0::SyntaxTree)
+    (JS.head(st0) === :macrocall && JS.numchildren(st0) ≥ 3) || return nothing
+    text = st0[3]
+    (JS.head(text) === :value && text.value isa String) || return nothing
+    is_cmd0(st0) && return true
+    (; context_module, world) = resolver
+    # The name of an explicit `@lazy_str "..."` call is written with `@`
+    (context_module === nothing || '@' in JS.sourcetext(st0[1])) && return nothing
+    return is_macrocall_binding0(context_module, world, st0, Base, Symbol("@lazy_str")) ?
+        false : nothing
+end
+
+function _strip_literal(st0::SyntaxTree, lit::InterpolatedLiteral, resolver::MacroResolver)
+    interps, _ = _interpolations(lit, resolver)
     isempty(interps) && return nothing
-    exs = _cmd_interpolation_tuples(interps)
+    exs = _interpolation_tuples(interps)
     return JL.@ast(_, st0, [:block exs...])
 end
 
-# Each interpolation is evaluated in a tuple, e.g. `xs...` may be interpolated
-function _cmd_interpolation_tuples(interps::Vector{Pair{UnitRange{Int},SyntaxTree}})
+# Each interpolation is evaluated in a tuple or as an argument, e.g. `xs...` may be
+# interpolated
+function _interpolation_tuples(interps::Vector{Pair{UnitRange{Int},SyntaxTree}})
     exs = SyntaxList()
     for (_, ex) in interps
         push!(exs, JL.@ast(_, ex, [:tuple ex]))
@@ -640,54 +541,55 @@ function _cmd_interpolation_tuples(interps::Vector{Pair{UnitRange{Int},SyntaxTre
     return exs
 end
 
-# The source map of a cmd literal: the byte of the source file that each byte index of its
-# command `value`, and the index past its end, was unescaped from, or `nothing` for a
-# literal that isn't located that precisely
-function _cmd_literal_source_map(text::SyntaxTree, value::String)
+function _literal_source_map(text::SyntaxTree, value::String, is_cmd::Bool)
     is_synthesized_value(text) && return nothing
-    source_map = @something _cmd_source_map(value, String(JS.sourcetext(text))) return nothing
+    source_map = @something _raw_source_map(value, String(JS.sourcetext(text)), is_cmd) return nothing
     source_map .+= JS.first_byte(text) - 1
     return source_map
 end
 
-# Compose the source map of the cmd literal with the string `nested`, parsed from the
-# command `value`, with `source_map`, that of `value`
-function _cmd_nested_source_map(
-        nested::SyntaxTree, value::String, source_map::Union{Nothing,Vector{Int}}
-    )
+# Compose the source map of the literal with the string `nested`, parsed from the value of
+# `lit`, with that of `lit`
+function _nested_source_map(nested::SyntaxTree, lit::InterpolatedLiteral, is_cmd::Bool)
+    (; value, source_map) = lit
     source_map === nothing && return nothing
     firstidx = JS.first_byte(nested)
-    nested_map = @something _cmd_source_map(
-        nested.value::String, value[firstidx:JS.last_byte(nested)]) return nothing
+    raw = value[firstidx:JS.last_byte(nested)]
+    nested_map = @something _raw_source_map(nested.value::String, raw, is_cmd) return nothing
     for i in eachindex(nested_map)
         nested_map[i] = source_map[firstidx - 1 + nested_map[i]]
     end
     return nested_map
 end
 
-# The source map of a cmd literal in terms of the indices of its source text `raw`, which
-# is parsed again for the chunks that dedenting leaves of it. They are unescaped here as
-# `JS.unescape_raw_string` does. Return `nothing` if `raw` isn't a cmd literal or doesn't
+# The source map of a literal in terms of the indices of its source text `raw`, which is
+# parsed again for the chunks that dedenting leaves of it. They are unescaped here as
+# `JS.unescape_raw_string` does. Return `nothing` if `raw` isn't such a literal or doesn't
 # unescape to `value`, e.g. for a nested literal with dedented lines.
-function _cmd_source_map(value::String, raw::String)
-    startswith(raw, '`') || return nothing
-    stream = JS.ParseStream(raw; version=PARSE_VERSION)
-    JS.parse!(stream; rule=:atom)
+function _raw_source_map(value::String, raw::String, is_cmd::Bool)
+    delim = is_cmd ? '`' : '"'
+    startswith(raw, delim) || return nothing
+    # A string is only unescaped as this where it is the argument of a string macro
+    prefix = is_cmd ? "" : "x"
+    stream = JS.ParseStream(prefix * raw; version=PARSE_VERSION)
+    JS.parse!(stream; rule=:statement)
+    kind = is_cmd ? JS.K"CmdString" : JS.K"String"
+    offset = ncodeunits(prefix)
     source_map = Int[]
     afteridx = firstindex(raw)
     for tc in TokenCursor(stream)
-        (JS.kind(tc) === JS.K"CmdString" && !JS.is_trivia(this(tc))) || continue
-        _cmd_unescape_chunk!(source_map, value, raw, JS.first_byte(tc), JS.last_byte(tc)) ||
-            return nothing
-        afteridx = JS.last_byte(tc) + 1
+        (JS.kind(tc) === kind && !JS.is_trivia(this(tc))) || continue
+        startidx, stopidx = JS.first_byte(tc) - offset, JS.last_byte(tc) - offset
+        _unescape_chunk!(source_map, value, raw, startidx, stopidx, UInt8(delim)) || return nothing
+        afteridx = stopidx + 1
     end
     length(source_map) == ncodeunits(value) || return nothing
     push!(source_map, afteridx)
     return source_map
 end
 
-function _cmd_unescape_chunk!(
-        source_map::Vector{Int}, value::String, raw::String, i::Int, stopidx::Int
+function _unescape_chunk!(
+        source_map::Vector{Int}, value::String, raw::String, i::Int, stopidx::Int, delim::UInt8
     )
     buf = codeunits(raw)
     while i <= stopidx
@@ -698,7 +600,7 @@ function _cmd_unescape_chunk!(
                 i < stopidx && buf[i+1] == UInt8('\n') && (i += 1)
                 c = UInt8('\n')
             end
-            _cmd_push_source!(source_map, value, c, rawidx) || return false
+            _push_source!(source_map, value, c, rawidx) || return false
             i += 1
             continue
         end
@@ -707,15 +609,15 @@ function _cmd_unescape_chunk!(
             j += 1
         end
         nbackslash = j - i
-        # Backslashes before a backtick or the end of the chunk are themselves escaped
-        escaped = j > stopidx || buf[j] == UInt8('`')
+        # Backslashes before a delimiter or the end of the chunk are themselves escaped
+        escaped = j > stopidx || buf[j] == delim
         for k = 0:(escaped ? nbackslash ÷ 2 : nbackslash)-1
-            _cmd_push_source!(source_map, value, UInt8('\\'), escaped ? i + 2k : i + k) || return false
+            _push_source!(source_map, value, UInt8('\\'), escaped ? i + 2k : i + k) || return false
         end
         if j <= stopidx
-            # An escaped backtick begins at its backslash
+            # An escaped delimiter begins at its backslash
             rawidx = escaped && isodd(nbackslash) ? j - 1 : j
-            _cmd_push_source!(source_map, value, buf[j], rawidx) || return false
+            _push_source!(source_map, value, buf[j], rawidx) || return false
             j += 1
         end
         i = j
@@ -723,20 +625,16 @@ function _cmd_unescape_chunk!(
     return true
 end
 
-function _cmd_push_source!(
-        source_map::Vector{Int}, value::String, byte::UInt8, rawidx::Int
-    )
+function _push_source!(source_map::Vector{Int}, value::String, byte::UInt8, rawidx::Int)
     idx = length(source_map) + 1
     (idx <= ncodeunits(value) && codeunit(value, idx) == byte) || return false
     push!(source_map, rawidx)
     return true
 end
 
-# The source of `value[startidx:stopbyte]`, or else `text` as a whole
-function _cmd_source(
-        text::SyntaxTree, value::String, source_map::Union{Nothing,Vector{Int}},
-        startidx::Int, stopbyte::Int
-    )
+# The source of `lit.value[startidx:stopbyte]`, or else that of `lit` as a whole
+function _literal_source(lit::InterpolatedLiteral, startidx::Int, stopbyte::Int)
+    (; text, value, source_map) = lit
     source_map === nothing && return text
     src = BS.sourceref(text)
     src isa BS.SourceRef || return text
@@ -744,15 +642,34 @@ function _cmd_source(
     return BS.SourceRef(src.code, UInt32(source_map[startidx]), UInt32(source_map[afteridx] - 1))
 end
 
-# The interpolations of the command `value` of the cmd literal with the string `text`,
-# each with the range of `value` that it is parsed from, and the error that parsing them
-# stopped with, if any. This tracks the quoting and escaping of `shell_parse` only as far
-# as they decide whether a `$` interpolates. See `_cmd_copy_with_source` for `context` and
-# `strip_nested`.
-function _cmd_interpolations(
-        text::SyntaxTree, value::String, source_map::Union{Nothing,Vector{Int}},
-        context::BS.SyntaxContext, strip_nested::Bool
+# The interpolations of `lit`, each with the range of its value that it is parsed from, and
+# the error that parsing them stopped with, if any. With `strip`, the literals in them are
+# also replaced with their interpolations, as by `strip_interpolated_literal`.
+_interpolations(lit::InterpolatedLiteral, strip::Union{Nothing,MacroResolver}) =
+    lit.is_cmd ? _cmd_interpolations(lit, strip) : _lazy_str_interpolations(lit, strip)
+
+# Parse the interpolation at `idx` of the value of `lit` into `interps`, and return the
+# index after it, or else the error
+function _parse_interpolation!(
+        interps::Vector{Pair{UnitRange{Int},SyntaxTree}}, lit::InterpolatedLiteral,
+        strip::Union{Nothing,MacroResolver}, idx::Int
     )
+    node, afteridx = try
+        JS.parseatom(SyntaxTree, lit.value, idx; version=PARSE_VERSION, ignore_errors=false)
+    catch err
+        msg = err isa JS.ParseError && !isempty(err.diagnostics) ?
+            first(err.diagnostics).message :
+            first(split(sprint(locked_showerror, err), '\n'))
+        return "failed to parse interpolation: $msg"
+    end
+    push!(interps, idx:afteridx-1 => _copy_with_source(node, lit, strip))
+    return afteridx
+end
+
+# This tracks the quoting and escaping of `shell_parse` only as far as they decide whether
+# a `$` interpolates
+function _cmd_interpolations(lit::InterpolatedLiteral, strip::Union{Nothing,MacroResolver})
+    (; value) = lit
     interps = Pair{UnitRange{Int},SyntaxTree}[]
     in_single_quotes = in_double_quotes = false
     idx = firstindex(value)
@@ -765,24 +682,15 @@ function _cmd_interpolations(
             (nextidx > stopidx || isspace(value[nextidx])) && break
             if startswith(SubString(value, nextidx), "var\"")
                 # `shell_parse` takes this as the name `var` followed by a quoted string
-                srcref = _cmd_source(text, value, source_map, nextidx, nextidx + 2)
-                parsed = SyntaxTree(:identifier, nothing, "var", srcref, context)
-                afteridx = nextidx + 3
+                srcref = _literal_source(lit, nextidx, nextidx + 2)
+                var = SyntaxTree(:identifier, nothing, "var", srcref, lit.context)
+                push!(interps, nextidx:nextidx+2 => var)
+                idx = nextidx + 3
             else
-                node, afteridx = try
-                    JS.parseatom(SyntaxTree, value, nextidx;
-                        version=PARSE_VERSION, ignore_errors=false)
-                catch err
-                    msg = err isa JS.ParseError && !isempty(err.diagnostics) ?
-                        first(err.diagnostics).message :
-                        first(split(sprint(locked_showerror, err), '\n'))
-                    return interps, "failed to parse interpolation: $msg"
-                end
-                parsed = _cmd_copy_with_source(
-                    node, text, value, source_map, context, strip_nested)
+                afteridx = _parse_interpolation!(interps, lit, strip, nextidx)
+                afteridx isa String && return interps, afteridx
+                idx = afteridx
             end
-            push!(interps, nextidx:afteridx-1 => parsed)
-            idx = afteridx
             continue
         elseif !in_double_quotes && c == '\''
             in_single_quotes = !in_single_quotes
@@ -798,39 +706,38 @@ function _cmd_interpolations(
     return interps, nothing
 end
 
-# Copy `node`, parsed from the command `value`, along with its source, into `context`,
-# the context of the cmd literal. With `strip_nested`, the cmd literals in `node` are
-# also replaced with their interpolations, as by `strip_cmd_literal`.
-function _cmd_copy_with_source(
-        node::SyntaxTree, text::SyntaxTree, value::String,
-        source_map::Union{Nothing,Vector{Int}}, context::BS.SyntaxContext, strip_nested::Bool
+# Copy `node`, parsed from the value of `lit`, along with its source, into the context of
+# `lit`. See `_interpolations` for `strip`.
+function _copy_with_source(
+        node::SyntaxTree, lit::InterpolatedLiteral, strip::Union{Nothing,MacroResolver}
     )
-    srcref = _cmd_source(text, value, source_map, JS.first_byte(node), JS.last_byte(node))
+    srcref = _literal_source(lit, JS.first_byte(node), JS.last_byte(node))
+    (; context) = lit
     if JS.is_leaf(node)
-        # The parser locates a macro call in `value` rather than in the source file
+        # The parser locates a macro call in the value rather than in the source file
         val = node.value isa LineNumberNode ? BS.first_linenode(srcref) : node.value
         # `adopt_scope` would keep the `unexpanded` of the scope-less parse context
         return BS.@mknode(node; value=val, source=srcref, context)
     end
     children = SyntaxList()
     for child in JS.children(node)
-        push!(children, _cmd_copy_with_source(
-            child, text, value, source_map, context, strip_nested))
+        push!(children, _copy_with_source(child, lit, strip))
     end
     copied = BS.@mknode(node; source=srcref, children, context)
-    strip_nested || return copied
-    nested = @something _cmd_literal_text(node) return copied
+    strip === nothing && return copied
+    is_cmd = @something _interpolated_literal_kind(strip, node) return copied
+    nested = node[3]
     nested_value = nested.value::String
     '$' in nested_value || return copied
-    nested_map = _cmd_nested_source_map(nested, value, source_map)
-    return @something _cmd_strip(copied, copied[3], nested_value, nested_map) copied
+    nested_map = _nested_source_map(nested, lit, is_cmd)
+    nested_lit = InterpolatedLiteral(copied[3], nested_value, nested_map, is_cmd, context)
+    return @something _strip_literal(copied, nested_lit, strip) copied
 end
 
 _cmd_placeholder(i::Int) = "__cmd_interpolation_$(i)__"
 
-function _cmd_parse(
-        text::SyntaxTree, value::String, interps::Vector{Pair{UnitRange{Int},SyntaxTree}}
-    )
+function _cmd_parse(lit::InterpolatedLiteral, interps::Vector{Pair{UnitRange{Int},SyntaxTree}})
+    (; text, value) = lit
     io = IOBuffer()
     lastidx = firstindex(value)
     for (i, (range, _)) in enumerate(interps)

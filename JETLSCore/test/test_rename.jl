@@ -392,7 +392,7 @@ end
     end
 
     # aviatesk/JETLS.jl#1052
-    @testset "rename with cmd literal" begin
+    @testset "rename with cmd literal or lazy string" begin
         for (code, n) in (
                 """
                 func(│xxx│) = `echo \$│xxx│ --flag=\$(│xxx│)`
@@ -411,6 +411,15 @@ end
                         `git log \\
                             --format=\$│xxx│` : `cmd /c echo fallback`), String))
                     ```
+                """ => 4,
+                # a lazy string dedented by less than the indentation of its last line
+                """
+                func(│xxx│) = lazy\"\"\"value:
+                    \$│xxx│\"\"\"
+                """ => 4,
+                # a lazy string nested in another with escaped quotes
+                """
+                func(│xxx│) = lazy"value: \$(lazy\\"nested \$│xxx│\\")"
                 """ => 4,
             )
             (; fi, positions, furi, rename_binding) = local_rename_testcase(server, code, n, @__MODULE__)

@@ -499,8 +499,10 @@ function _remove_macrocalls(
             # `@main` functions are desugared by `desugar_main_macrocall` below,
             # so there's no need to remove them here
             return st0, false
-        elseif is_cmd0(st0)
-            stripped = @something strip_cmd_literal(st0) return st0, false
+        end
+        stripped = strip_interpolated_literal(context_module, world, st0)
+        if stripped !== nothing
+            stripped === st0 && return st0, false
             return first(_remove_macrocalls(context_module, world, stripped; strip_static)), true
         end
         new_children = SyntaxList()
@@ -607,9 +609,10 @@ are resolved from `context_module`; calls whose macro object matches a binding i
 scope/binding resolution to drive LSP features such as find-references,
 document-highlight, rename, and go-to-definition.
 
-A cmd literal with `\$` interpolations is replaced with a `block` of them in the same way.
-The parser leaves them unparsed in the string of the literal, so they are parsed here
-with their source locations, which also lets the macro calls in them be converted.
+A cmd literal or a `lazy"..."` string with `\$` interpolations is replaced with a `block`
+of them in the same way. The parser leaves them unparsed in the string of the literal, so
+they are parsed here with their source locations, which also lets the macro calls in them
+be converted.
 
 With `strip_static=true`, `@static` conditionals are also rewritten to plain runtime
 conditionals (keeping every branch) rather than expanded to the single branch selected

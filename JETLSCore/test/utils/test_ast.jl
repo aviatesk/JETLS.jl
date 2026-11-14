@@ -18,6 +18,9 @@ module same_named_macro_context
 macro inline(ex)
     return esc(ex)
 end
+macro lazy_str(str)
+    return str
+end
 end
 
 module nested_same_named_macro_context
@@ -567,9 +570,9 @@ end
     end
 end
 
-@testset "`remove_macrocalls` replaces cmd literals" begin
+@testset "`remove_macrocalls` replaces literals with unparsed interpolations" begin
     world = Base.get_world_counter()
-    for code in ("`echo hello`", "`echo '\$xxx' \\\$xxx`")
+    for code in ("`echo hello`", "`echo '\$xxx' \\\$xxx`", "lazy\"hello\"")
         st0 = jlparse(code; rule=:statement)
         @test JETLSCore.remove_macrocalls(@__MODULE__, world, st0) === st0
     end
@@ -597,6 +600,20 @@ end
                 "            --format=\$key` : `cmd /c echo fallback`), String))",
                 "    ```",
             ), '\n'),
+            "lazy\"value \$key and \$(key...)\"",
+            "lazy\"\"\"\n    value\n        \$key\n    \"\"\"",
+            # dedented by less than the indentation of the last line
+            "lazy\"\"\"value\n    \$key\"\"\"",
+            "lazy\"\"\"\n    value\n  \$key\n      \"\"\"",
+            "lazy\"\"\"\r\n    value\r\n    \$key\r\n    \"\"\"",
+            "lazy\"value\\\\\\\"\$key\"",
+            "Base.lazy\"value \$key\"",
+            "lazy\"value \$key\"c",
+            # nested literals
+            "lazy\"value \$(lazy\\\"nested \$key\\\")\"",
+            "lazy\"value \$(`echo \$key`)\"",
+            "`echo \$(lazy\"value \$key\")`",
+            "lazy\"value \$(@time(string(key)))\"",
         )
         st0 = jlparse(code; rule=:statement)
         transformed = JETLSCore.remove_macrocalls(@__MODULE__, world, st0)
@@ -608,6 +625,17 @@ end
             return nothing
         end
         @test ranges == findall("key", code)
+    end
+
+    # The string of an explicit `@lazy_str` call is escaped differently, and the string
+    # macro of another module may not interpolate
+    for (context_module, code) in (
+            (@__MODULE__, "@lazy_str \"value \\\$key\""),
+            (same_named_macro_context, "lazy\"value \$key\""))
+        st0 = jlparse(code; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(context_module, world, st0)
+        @test JS.head(transformed) === :block
+        @test all(JS.is_leaf, JS.children(transformed))
     end
 
     let st0 = jlparse("`echo \$(@time(xxx)) \$(@inline(yyy))`"; rule=:statement)

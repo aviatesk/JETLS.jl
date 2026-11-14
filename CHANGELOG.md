@@ -87,14 +87,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed [type inlay hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types), hover, and other features that show inferred types failing on Julia 1.14 and later for code that uses `ccall`, such as the `Sockets` standard library.
 
-- Fixed find-references, document-highlight, rename, hover, and go-to-definition for identifiers interpolated into command literals, such as `a` in `` `echo $a` ``.
-  Find-references and document-highlight no longer cover the whole line of the command literal for them, and rename no longer replaces that line with the new name.
-  These features now also work with the cursor on such an identifier.
-  Undefined names interpolated into command literals are now also reported by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var).
+- Fixed find-references, document-highlight, and rename treating the whole line of a command literal as an occurrence of an identifier interpolated into it, such as `a` in `` `echo $a` ``.
+  These features, hover, and go-to-definition now work on such identifiers, and undefined ones are reported by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var).
   (Closed https://github.com/aviatesk/JETLS.jl/issues/1052)
 
-- Fixed rename being offered with the cursor on a command literal or on an integer literal beyond `Int64`, where it replaced every such literal with the new name.
-  Such a literal as a whole is no longer a target of rename, find-references, document-highlight, hover, or go-to-definition.
+- Fixed command literals and integer literals beyond `Int64` being targets of rename, which replaced every such literal with the new name, and of find-references, document-highlight, hover, and go-to-definition.
+
+- Fixed find-references, document-highlight, and rename mislocating identifiers interpolated into some `lazy"..."` strings, e.g. a triple-quoted one whose closing `"""` is not on a line of its own, or `n` in `lazy"$(@time(string(n)))"`.
+
+- Fixed `lazy"..."c`, the compact form of lazy strings added in Julia 1.14, being reported as a macro expansion error, with the names interpolated into it reported as unused.
 
 ## 2026-11-04
 

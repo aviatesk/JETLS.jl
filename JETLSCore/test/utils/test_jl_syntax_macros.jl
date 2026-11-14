@@ -666,6 +666,11 @@ end
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("`@lazy_str`", d.msg)
         end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("lazy\"value \$(xxx +)\"")
+            end
+            @test occursin("unexpected `)`", only(diags).msg)
+        end
         @test collect_macro_diagnostics() do
             jlresolve(lowering_module, "f(idx) = @lazy_wrapper idx")
         end |> isempty
@@ -684,6 +689,17 @@ end
         for code in (
                 "lazyfunc() = lazy\"前置 \\\"\$key\"",
                 "lazyfunc() = lazy\"\"\"前置 \$key\"\"\"",
+                "lazyfunc() = lazy\"value\\\\\\\"\$key\"",
+                # dedented by less than the indentation of the last line
+                "lazyfunc() = lazy\"\"\"value\n    \$key\"\"\"",
+                "lazyfunc() = lazy\"\"\"\n    value\n    \$key\"\"\"",
+                "lazyfunc() = lazy\"\"\"\n    value\n  \$key\n      \"\"\"",
+                "lazyfunc() = lazy\"\"\"\n\tvalue\n\t  \$key\n\t\"\"\"",
+                "lazyfunc() = lazy\"\"\"\n    value\n\n      \$key\n    \"\"\"",
+                "lazyfunc() = lazy\"\"\"\r\n    value\r\n    \$key\r\n    \"\"\"",
+                # nested literals
+                "lazyfunc() = lazy\"\"\"value \$(lazy\"nested \$key\")\"\"\"",
+                "lazyfunc() = lazy\"value \$(`echo \$key`)\"",
             )
             res = jlresolve(code)
             assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
@@ -697,19 +713,25 @@ end
             res = jlresolve(code)
             assert_binding_provenance_range(res, :global, "triple_key", source_range(code, "triple_key"))
         end
+        # The interpolations of a nested literal that is not written in the source as it is
+        # parsed, and those in the string of an explicit `@lazy_str` call, are only located
+        # by `strip_interpolated_literal`, or not at all
+        for (code, literal) in (
+                "lazyfunc() = lazy\"value \$(lazy\\\"nested \$key\\\")\"" => "\\\"nested \$key\\\"",
+                "lazyfunc() = @lazy_str \"value \\\$key\"" => "\"value \\\$key\"",
+            )
+            res = jlresolve(code)
+            binfos = filter(b -> b.kind === :global && b.name == "key", res.ctx3.bindings.info)
+            @test length(binfos) == 1
+            provs = BS.flattened_provenance(JL.binding_ex(res.ctx3, only(binfos).id))
+            @test JS.byte_range(last(provs)) == source_range(code, literal)
+        end
     end
 
     @testset "interpolations in old-style macro output" begin
         let code = "Base.@constprop :none lazyfunc(c) = lazy\"a \$(c.name) b\""
             st5 = JL.lower(lowering_module, jlparse(code; rule=:statement))
             @test_logs min_level=Base.CoreLogging.Warn JL.to_lowered_expr(st5)
-        end
-    end
-
-    @testset "unquoted source mapping" begin
-        for value in ("\"\$key", "\"\"\"\$key\"\"\"")
-            source_map = JETLSCore._lazy_str_source_map(value, value; quoted=false)
-            @test source_map == Dict(i => i for i in 1:ncodeunits(value)+1)
         end
     end
 
@@ -741,6 +763,41 @@ end
         let ls = jleval(lowering_module, "let idx = 4; @lazy_wrapper idx; end")
             @test ls isa LazyString
             @test String(ls) === "idx=4"
+        end
+        # Macro calls in the interpolations are located in the source file
+        let (file, line, ls) = jleval(
+                "(@__FILE__, @__LINE__,\nlazy\"\$(@__FILE__) \$(@__LINE__)\")")
+            @test String(ls) == "$file $(line + 1)"
+        end
+    end
+
+    # `lazy"..."c` is only supported by some Julia versions
+    @testset "flags" begin
+        code = "let x = 1.23456789; lazy\"x = \$x\"c; end"
+        native = try
+            Core.eval(lowering_module, Meta.parse(code))
+        catch
+            nothing
+        end
+        if native === nothing
+            diags = collect_macro_diagnostics() do
+                jlexpand(code)
+            end
+            @test length(diags) == 1
+        else
+            diags = collect_macro_diagnostics() do
+                @test String(jleval(code)) == String(native) == "x = 1.23457"
+            end
+            @test isempty(diags)
+            let code = "lazyfunc() = lazy\"value \$key\"c"
+                res = jlresolve(code)
+                assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
+            end
+            diags = collect_macro_diagnostics() do
+                jlexpand("lazy\"value\"d")
+            end
+            @test length(diags) == 1
+            @test occursin("unknown lazy-string flag", only(diags).msg)
         end
     end
 end
@@ -837,7 +894,7 @@ same_cmd(a, b) = typeof(a) === typeof(b) && repr(a) == repr(b)
         end
         # A cmd literal in an interpolation is expanded by its own macro call, which only
         # locates the interpolations of a literal that is written in the source as it is
-        # parsed. Those of the others are located by `strip_cmd_literal` only.
+        # parsed. Those of the others are located by `strip_interpolated_literal` only.
         for (code, nested) in (
                 "cmdfunc() = `echo \$(\\`echo \$key\\`)`" => "\\`echo \$key\\`",
                 join((
