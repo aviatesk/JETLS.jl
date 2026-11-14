@@ -950,7 +950,9 @@ function abstract_call_method_with_const_args(interp::AbstractInterpreter,
     # try constant prop'
     new_result = const_prop_call(interp, mi, result, arginfo, sv, concrete_eval_result)
     new_result === nothing && return nothing
-    if eligibility === :none
+    # running a call that never returns gains nothing, and if it also cannot throw,
+    # its code is unreachable and may be undefined behavior
+    if eligibility === :none && new_result.rt !== Bottom
         # const-prop' may have refined effects to be foldable when the original
         # call was not; in that case, prefer concrete eval over the const-prop' result
         new_eligibility = _concrete_eval_eligible(
@@ -1105,8 +1107,15 @@ function _concrete_eval_call(
         concrete_result = ConcreteResult(edge, effects)
         return ConstCallResult(Bottom, Any, concrete_result, effects, #=const_edge=#nothing)
     end
-    concrete_result = ConcreteResult(edge, EFFECTS_TOTAL, value)
-    return ConstCallResult(Const(value), Bottom, concrete_result, EFFECTS_TOTAL, #=const_edge=#nothing)
+    rt = Const(value)
+    # A non-mutation-free value obtained by concrete evaluation may refer to global
+    # memory (e.g. a const global `Ref`), so preserve the `:inaccessiblememonly` taint
+    # of the call: otherwise the caller may access the value's memory and still be
+    # refined to be `:inaccessiblememonly` (and thus `:consistent`)
+    concrete_effects = is_mutation_free_argtype(rt) ? EFFECTS_TOTAL :
+        Effects(EFFECTS_TOTAL; inaccessiblememonly=effects.inaccessiblememonly)
+    concrete_result = ConcreteResult(edge, concrete_effects, value)
+    return ConstCallResult(rt, Bottom, concrete_result, concrete_effects, #=const_edge=#nothing)
 end
 
 # check if there is a cycle and duplicated inference of `mi`
