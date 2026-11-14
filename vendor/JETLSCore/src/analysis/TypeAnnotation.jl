@@ -690,7 +690,7 @@ end
 #   (`bb_entry_vartable(frame, bb)[id]`), which CC's dataflow has already populated
 #   with cross-bb branch narrowing.
 function slot_type_at(slot::SlotNumber, idx::Int, frame::CC.InferenceState)
-    pc_assign = CC.find_dominating_assignment(slot.id, idx, frame)
+    pc_assign = Analyzer.find_dominating_assignment(slot.id, idx, frame)
     pc_assign === nothing || return frame.ssavaluetypes[pc_assign]
     bb = CC.block_for_inst(frame.cfg, idx)
     entry = @something bb_entry_vartable(frame, bb) return frame.src.slottypes[slot.id]
@@ -1190,7 +1190,7 @@ function infer_thunk!(
         inf_cache::LocalInferenceCache
     )
     strip_latestworld!(src)
-    mi = construct_toplevel_mi(src, context_module)
+    mi = construct_toplevel_mi(src, context_module, world)
     interp = ASTTypeAnnotator(world, tree, mi, filter;
         annotations, oc_argtype_observations=observations,
         oc_argtype_refinements=refinements, inf_cache)
@@ -1230,8 +1230,10 @@ function strip_latestworld!(src::CodeInfo)
     return src
 end
 
-function construct_toplevel_mi(src::CodeInfo, context_module::Module)
-    resolve_toplevel_symbols!(src, context_module)
+function construct_toplevel_mi(src::CodeInfo, context_module::Module, world::UInt)
+    # Resolution evaluates e.g. `ccall` types in the task's world, which may predate
+    # `context_module` (request tasks don't run in the latest world).
+    Base.invoke_in_world(world, resolve_toplevel_symbols!, src, context_module)
     return @ccall jl_method_instance_for_thunk(src::Any, context_module::Any)::Ref{MethodInstance}
 end
 

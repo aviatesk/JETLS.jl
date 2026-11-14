@@ -11,6 +11,11 @@ macro lazy_wrapper(idx)
         lazy"idx=$idx"
     end)
 end
+macro cmd_wrapper(arg)
+    return :(let arg = $(esc(arg))
+        `echo $arg`
+    end)
+end
 macro expect_symbol(x)
     x isa Symbol || error("expected a symbol: $x")
     return esc(x)
@@ -661,6 +666,11 @@ end
             @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
             @test occursin("`@lazy_str`", d.msg)
         end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("lazy\"value \$(xxx +)\"")
+            end
+            @test occursin("unexpected `)`", only(diags).msg)
+        end
         @test collect_macro_diagnostics() do
             jlresolve(lowering_module, "f(idx) = @lazy_wrapper idx")
         end |> isempty
@@ -679,6 +689,17 @@ end
         for code in (
                 "lazyfunc() = lazy\"前置 \\\"\$key\"",
                 "lazyfunc() = lazy\"\"\"前置 \$key\"\"\"",
+                "lazyfunc() = lazy\"value\\\\\\\"\$key\"",
+                # dedented by less than the indentation of the last line
+                "lazyfunc() = lazy\"\"\"value\n    \$key\"\"\"",
+                "lazyfunc() = lazy\"\"\"\n    value\n    \$key\"\"\"",
+                "lazyfunc() = lazy\"\"\"\n    value\n  \$key\n      \"\"\"",
+                "lazyfunc() = lazy\"\"\"\n\tvalue\n\t  \$key\n\t\"\"\"",
+                "lazyfunc() = lazy\"\"\"\n    value\n\n      \$key\n    \"\"\"",
+                "lazyfunc() = lazy\"\"\"\r\n    value\r\n    \$key\r\n    \"\"\"",
+                # nested literals
+                "lazyfunc() = lazy\"\"\"value \$(lazy\"nested \$key\")\"\"\"",
+                "lazyfunc() = lazy\"value \$(`echo \$key`)\"",
             )
             res = jlresolve(code)
             assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
@@ -692,19 +713,25 @@ end
             res = jlresolve(code)
             assert_binding_provenance_range(res, :global, "triple_key", source_range(code, "triple_key"))
         end
+        # The interpolations of a nested literal that is not written in the source as it is
+        # parsed, and those in the string of an explicit `@lazy_str` call, are only located
+        # by `strip_interpolated_literal`, or not at all
+        for (code, literal) in (
+                "lazyfunc() = lazy\"value \$(lazy\\\"nested \$key\\\")\"" => "\\\"nested \$key\\\"",
+                "lazyfunc() = @lazy_str \"value \\\$key\"" => "\"value \\\$key\"",
+            )
+            res = jlresolve(code)
+            binfos = filter(b -> b.kind === :global && b.name == "key", res.ctx3.bindings.info)
+            @test length(binfos) == 1
+            provs = BS.flattened_provenance(JL.binding_ex(res.ctx3, only(binfos).id))
+            @test JS.byte_range(last(provs)) == source_range(code, literal)
+        end
     end
 
     @testset "interpolations in old-style macro output" begin
         let code = "Base.@constprop :none lazyfunc(c) = lazy\"a \$(c.name) b\""
             st5 = JL.lower(lowering_module, jlparse(code; rule=:statement))
             @test_logs min_level=Base.CoreLogging.Warn JL.to_lowered_expr(st5)
-        end
-    end
-
-    @testset "unquoted source mapping" begin
-        for value in ("\"\$key", "\"\"\"\$key\"\"\"")
-            source_map = JETLSCore._lazy_str_source_map(value, value; quoted=false)
-            @test source_map == Dict(i => i for i in 1:ncodeunits(value)+1)
         end
     end
 
@@ -736,6 +763,243 @@ end
         let ls = jleval(lowering_module, "let idx = 4; @lazy_wrapper idx; end")
             @test ls isa LazyString
             @test String(ls) === "idx=4"
+        end
+        # Macro calls in the interpolations are located in the source file
+        let (file, line, ls) = jleval(
+                "(@__FILE__, @__LINE__,\nlazy\"\$(@__FILE__) \$(@__LINE__)\")")
+            @test String(ls) == "$file $(line + 1)"
+        end
+    end
+
+    # `lazy"..."c` is only supported by some Julia versions
+    @testset "flags" begin
+        code = "let x = 1.23456789; lazy\"x = \$x\"c; end"
+        native = try
+            Core.eval(lowering_module, Meta.parse(code))
+        catch
+            nothing
+        end
+        if native === nothing
+            diags = collect_macro_diagnostics() do
+                jlexpand(code)
+            end
+            @test length(diags) == 1
+        else
+            diags = collect_macro_diagnostics() do
+                @test String(jleval(code)) == String(native) == "x = 1.23457"
+            end
+            @test isempty(diags)
+            let code = "lazyfunc() = lazy\"value \$key\"c"
+                res = jlresolve(code)
+                assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
+            end
+            diags = collect_macro_diagnostics() do
+                jlexpand("lazy\"value\"d")
+            end
+            @test length(diags) == 1
+            @test occursin("unknown lazy-string flag", only(diags).msg)
+        end
+    end
+end
+
+native_cmd(code::AbstractString) = Core.eval(lowering_module, Meta.parse(code))
+
+same_cmd(a, b) = typeof(a) === typeof(b) && repr(a) == repr(b)
+
+@testset "@cmd" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand("`echo hello`")
+            @test has_qualified_name(st1, :top, "cmd_gen")
+        end
+    end
+
+    @testset "validation" begin
+        for code in (
+                "`echo \$`",
+                "`echo \$ xxx`",
+                "`echo 'xxx`",
+                "`echo \$(xxx`",
+                "`echo xxx;yyy`",
+            )
+            diags = collect_macro_diagnostics() do
+                jlexpand(code)
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("`@cmd`", d.msg)
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("`echo \$xxx;yyy`")
+            end
+            @test occursin("`echo \$xxx;yyy`", only(diags).msg)
+        end
+        let diags = collect_macro_diagnostics() do
+                jlexpand("`echo \$(xxx +)`")
+            end
+            @test occursin("unexpected `)`", only(diags).msg)
+        end
+        let code = "`echo \$(\\`echo 'xxx\\`)`"
+            diags = collect_macro_diagnostics() do
+                jlexpand(code)
+            end
+            @test JS.byte_range(only(diags).node) == source_range(code, "\\`echo 'xxx\\`")
+        end
+        # A cmd literal in the arguments of a macro call is left for the macro to expand
+        let diags = collect_macro_diagnostics() do
+                jlexpand("```echo \$(@static(false ? `xxx;yyy` : `zzz`))```")
+            end
+            @test !any(d -> d.severity == JETLSCore.LSP.DiagnosticSeverity.Error, diags)
+        end
+        let code = "cmdfunc() = `echo \$xxx \$(yyy) 'zzz`"
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "xxx", source_range(code, "xxx"))
+            assert_binding_provenance_range(res, :global, "yyy", source_range(code, "yyy"))
+        end
+        @test collect_macro_diagnostics() do
+            jlresolve(lowering_module, "f(arg) = @cmd_wrapper arg")
+        end |> isempty
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let code = "cmdfunc() = `echo \$xxx --flag=\$(yyy + 1) \"quoted \$zzz\"`"
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "xxx", source_range(code, "xxx"))
+            assert_binding_provenance_range(res, :global, "yyy", source_range(code, "yyy"))
+            assert_binding_provenance_range(res, :global, "zzz", source_range(code, "zzz"))
+        end
+        for code in (
+                "cmdfunc() = `echo \\`\$key\\``",
+                "cmdfunc() = `echo \\\\\\`\$key`",
+                "cmdfunc() = `echo \\\\ \$key`",
+                "cmdfunc() = `echo 前置 \$key`",
+                "cmdfunc() = ```echo `前置` \\\\`\$key```",
+                # dedented by the indentation of the last line
+                "cmdfunc() = ```\n    echo\n        \$key\n    ```",
+                "cmdfunc() = ```echo\n    \$key```",
+                "cmdfunc() = ```\n    echo\n    \$key```",
+                # dedented by less than the indentation of the last line
+                "cmdfunc() = ```\n    echo\n  \$key\n      ```",
+                "cmdfunc() = ```\n\techo\n\t  \$key\n\t```",
+                "cmdfunc() = ```\n    echo\n\n      \$key\n    ```",
+                "cmdfunc() = ```\r\n    echo\r\n    \$key\r\n    ```",
+                # not dedented
+                "cmdfunc() = ```\n    echo\n    \$key\n```",
+                # nested literals
+                "cmdfunc() = `echo \$(string(\"a \$key\"))`",
+                "cmdfunc() = ```echo \$(read(`git log \$key`, String))```",
+            )
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "key", source_range(code, "key"))
+        end
+        # A cmd literal in an interpolation is expanded by its own macro call, which only
+        # locates the interpolations of a literal that is written in the source as it is
+        # parsed. Those of the others are located by `strip_interpolated_literal` only.
+        for (code, nested) in (
+                "cmdfunc() = `echo \$(\\`echo \$key\\`)`" => "\\`echo \$key\\`",
+                join((
+                    "cmdfunc() = ```",
+                    "    echo \$(read(`git log \\",
+                    "        --format=\$key`, String))",
+                    "    ```",
+                ), '\n') => "`git log \\\n        --format=\$key`",
+            )
+            res = jlresolve(code)
+            binfos = filter(b -> b.kind === :global && b.name == "key", res.ctx3.bindings.info)
+            @test length(binfos) == 1
+            provs = BS.flattened_provenance(JL.binding_ex(res.ctx3, only(binfos).id))
+            @test JS.byte_range(last(provs)) == source_range(code, nested)
+        end
+        # The interpolations in the string of an explicit `@cmd` call are not located
+        let code = "cmdfunc() = @cmd \"echo \\n \\\$key\""
+            res = jlresolve(code)
+            binfos = filter(b -> b.kind === :global && b.name == "key", res.ctx3.bindings.info)
+            @test length(binfos) == 1
+            provs = BS.flattened_provenance(JL.binding_ex(res.ctx3, only(binfos).id))
+            @test JS.byte_range(last(provs)) == source_range(code, "\"echo \\n \\\$key\"")
+        end
+        let code = "cmdfunc() = `echo '\$xxx' \\\$yyy \"\\\$zzz\" \$www`"
+            res = jlresolve(code)
+            assert_no_binding(res, :global, "xxx")
+            assert_no_binding(res, :global, "yyy")
+            assert_no_binding(res, :global, "zzz")
+            assert_binding_provenance_range(res, :global, "www", source_range(code, "www"))
+        end
+        # Base takes `\$var"xxx"` as the name `var` followed by a quoted string
+        let code = "cmdfunc() = `echo \$var\"xxx\"`"
+            res = jlresolve(code)
+            assert_binding_provenance_range(res, :global, "var", source_range(code, "var"))
+            assert_no_binding(res, :global, "xxx")
+        end
+    end
+
+    @testset "interpolations in old-style macro output" begin
+        let code = "Base.@constprop :none cmdfunc(c) = `a \$(c.name) b`"
+            st5 = JL.lower(lowering_module, jlparse(code; rule=:statement))
+            @test_logs min_level=Base.CoreLogging.Warn JL.to_lowered_expr(st5)
+        end
+    end
+
+    @testset "runtime semantics" begin
+        for code in (
+                "``",
+                "`echo hello`",
+                "`  echo 'a b' \"c d\" e\\ f  `",
+                """
+                let x = "a b", xs = ["1", "2"]
+                    `echo \$x \$xs pre\$(xs)post "q \$x \\\$x" '\$x' \\\$x`
+                end
+                """,
+                """
+                ```
+                    echo `x`
+                      \$(1 + 2)
+                    ```
+                """,
+                "let var = 1; `echo \$var\"x\"`; end",
+                "let cmd_gen = identity; `echo hello`; end",
+                "let x = \"a b\"; `echo \$(\\`ls \$x\\`)`; end",
+                "```echo \$(@static(false ? `xxx;yyy` : `zzz`))```",
+                "```echo \$(:(`xxx`).head)```",
+                """
+                let x = "a b"
+                    ```
+                    echo \$(length(`ls \\
+                        \$x`.exec))
+                    ```
+                end
+                """,
+            )
+            @test same_cmd(jleval(code), native_cmd(code))
+        end
+        @test same_cmd(
+            jleval(lowering_module, "let x = \"a b\"; @cmd_wrapper x; end"), `echo 'a b'`)
+
+        # Macro calls in the interpolations are located in the source file
+        let (file, line, cmd) = jleval(
+                "(@__FILE__, @__LINE__,\n`echo \$(@__FILE__) \$(@__LINE__)`)")
+            @test cmd.exec == ["echo", file, string(line + 1)]
+        end
+
+        # Pipelines, redirections and `~` are only supported by some Julia versions
+        for code in (
+                "`echo a | sort`",
+                "let file = \"out.txt\"; `echo a > \$file`; end",
+                "let user = \"\"; `ls ~ ~\$user/dir`; end",
+            )
+            native = try
+                native_cmd(code)
+            catch
+                nothing
+            end
+            if native === nothing
+                diags = collect_macro_diagnostics() do
+                    jlexpand(code)
+                end
+                @test length(diags) == 1
+            else
+                @test same_cmd(jleval(code), native)
+            end
         end
     end
 end

@@ -332,6 +332,22 @@ function declared_argtypes(@nospecialize sig)
     return argtypes
 end
 
+# The program counter of the last assignment to the slot `id` before the statement `idx` in
+# the basic block containing `idx`, or `nothing` if there is no such assignment.
+function find_dominating_assignment(id::Int, idx::Int, sv::CC.InferenceState)
+    block = CC.block_for_inst(sv.cfg, idx)
+    for pc in reverse(sv.cfg.blocks[block].stmts)
+        pc < idx || continue # `id` can be assigned at `idx` itself
+        stmt = sv.src.code[pc]
+        Meta.isexpr(stmt, :(=)) || continue
+        lhs = stmt.args[1]
+        lhs isa SlotNumber || continue
+        lhs.id == id || continue
+        return pc
+    end
+    return nothing
+end
+
 function should_analyze(analyzer::LSAnalyzer, sv::CC.InferenceState)
     report_target_modules = analyzer.report_target_modules
     return isnothing(report_target_modules) || CC.frame_module(sv) ∈ report_target_modules
@@ -452,7 +468,7 @@ function _cached_return_mentions_missing(@nospecialize(rt), depth::Int, budget::
     typ = rt isa Union{TypeVar,Core.TypeofVararg} ? rt : CC.widenconst(rt)
     found, budget = _mentions_missing(typ, depth, budget)
     found && return true, budget
-    if rt isa CC.PartialStruct
+    if rt isa Core.PartialStruct
         for ft in rt.fields
             found, budget = _cached_return_mentions_missing(ft, depth + 1, budget)
             found && return true, budget
@@ -641,6 +657,88 @@ function CC.abstract_call_gf_by_type(
 end
 end
 
+"""
+    CC.refinement_sigtype(analyzer::LSAnalyzer, applicable::Vector{CC.MethodMatchTarget},
+        argtypes::Vector{Any}, j::Int, i::Int) -> sigt
+
+Widens the signature type of `applicable[j]` that inference refines the `i`-th argument
+slot of a call with, so that the refinements do not split a component of the argument type
+into multiple union components.
+
+Inference refines the argument slots of a call to the argument types of the matched methods,
+e.g. `ready(x)` refines `x::Any` to `Union{HasX,NoX}` when `ready` has methods for `HasX`
+and `NoX`. Such a union reflects which methods exist rather than which values the analyzed
+code passes, while a method error is reported for an abstract argument type only when no
+method matches it, but for a union-split call whenever some branch has no matching method.
+So `takes_hasx(x)` after `ready(x)` would be reported for `NoX`, although it is not reported
+without the preceding call. The signature types of such split components are widened back
+to the component of the argument type, so `x::Any` stays `Any` after `ready(x)`, and a call
+to a function only defined for `Int` and `Float64` refines `x::Union{Nothing,Number}` to
+`Number`. This also covers refinements to unions involving `Missing` by loosely typed calls,
+e.g. `x & 0x0f` refining `x::Any` to `Union{Missing,Integer}`. Other refinements are kept,
+e.g. `Union{Nothing,Int}` refined to `Int`, so that the error reported at the refining call
+is not reported again afterwards, or `Any` refined to `Int` by a function only defined for
+`Int`.
+
+The same types refine the argument slot in the branches on the result of a call returning
+`Bool`, e.g. `if isidentifier(x)` would refine `x::Any` to `Union{AbstractString,Symbol}`
+in the `then` branch, and the fields passed through `MustAlias`es. The refinements that the
+callees provide on top of them, e.g. `x isa Union{Int,String}` in the body of a predicate,
+are kept for each match. Since the types for the matches are joined afterwards, such a
+refinement is still lost within a split component when another match contributes the
+widened component to the same branch, e.g. `x isa String` in a method for
+`Union{String,Symbol}` when a method for `Int` returns `true`.
+"""
+function CC.refinement_sigtype(
+        ::LSAnalyzer, applicable::Vector{CC.MethodMatchTarget}, argtypes::Vector{Any},
+        j::Int, i::Int
+    )
+    sigt = fieldtype(applicable[j].match.spec_types, i)
+    length(applicable) == 1 && !(sigt isa Union) && return sigt
+    argt = CC.widenslotwrapper(argtypes[i])
+    CC.isvarargtype(argt) && (argt = CC.unwrapva(argt))
+    argt = CC.widenconst(argt)
+    components = Base.uniontypes(argt)
+    parts = fill!(Vector{Any}(undef, length(components)), Union{})
+    for target in applicable
+        sigparts = @something signature_parts(fieldtype(target.match.spec_types, i), components) return argt
+        for (k, part) in sigparts
+            parts[k] = Union{parts[k],part}
+        end
+    end
+    widened = Union{}
+    for (k, part) in signature_parts(sigt, components)::Vector{Pair{Int,Any}}
+        # the parts within a component are widened back to the component unless they merge
+        # into a single type, e.g. `Tuple{Int,Integer}` and `Tuple{Real,Integer}` into
+        # `Tuple{Real,Integer}`
+        widened = Union{widened, parts[k] isa Union ? components[k] : part}
+    end
+    return widened
+end
+
+# The parts of the signature type `sigt` within the union `components` of an argument type,
+# paired with the indices of the components, or `nothing` if some of them fall into none of
+# `components`. A union component of `sigt` falls into the first component that contains it,
+# or otherwise into each component it overlaps, e.g. `Tuple{Union{Int,String}}` into
+# `Tuple{Int}` and `Tuple{String}`.
+function signature_parts(@nospecialize(sigt), components::Vector{Any})
+    sigparts = Pair{Int,Any}[]
+    for t in Base.uniontypes(sigt)
+        idx = findfirst(@nospecialize(c) -> t <: c, components)
+        if idx !== nothing
+            push!(sigparts, Pair{Int,Any}(idx, t))
+            continue
+        end
+        nparts = length(sigparts)
+        for k = 1:length(components)
+            part = typeintersect(t, components[k])
+            part === Union{} || push!(sigparts, Pair{Int,Any}(k, part))
+        end
+        length(sigparts) == nparts && return nothing
+    end
+    return sigparts
+end
+
 function after_abstract_invoke(
         analyzer::LSAnalyzer, ret::CC.Future{CC.CallMeta}, arginfo::CC.ArgInfo,
         sv::CC.InferenceState
@@ -766,10 +864,9 @@ does not involve `Missing` and either:
   `getproperty` are kept, since they come from the fields of the analyzed objects, e.g.
   `r.flag` for `flag::Union{Missing,Bool}`.
 
-A speculative match also refines its argument slots, e.g. `x & 0x0f` refines `x::Any` to
-`Union{Missing,Integer}`. Refinements that include `Missing` are dropped whenever such a
-match exists, even if the result itself is not widened or is unused, so that `x` is not
-reported as possibly `missing` afterwards.
+A speculative match would also refine its argument slots, e.g. `x & 0x0f` would refine
+`x::Any` to `Union{Missing,Integer}`, which [`CC.refinement_sigtype`](@ref) keeps `Any`, so
+that `x` is not reported as possibly `missing` afterwards.
 
 Other `missing` results, e.g. of a parser returning `missing` for invalid input, are kept
 even for loosely typed arguments.
@@ -783,20 +880,12 @@ function CC.widen_call_result(
         analyzer::LSAnalyzer, si::CC.StmtInfo, state::CC.CallInferenceState,
         sv::CC.AbsIntState
     )
-    matches = state.matches
-    mentions = call_signature_mentions_missing(matches)
-    speculative = !mentions && has_speculative_missing_match(matches)
-    if speculative
-        # `widen_call_result` is called after the slot refinements are computed and before
-        # they are stored in the resulting `CallMeta`. Drop them before the default check
-        # below, which returns early for unused call results.
-        drop_missing_slot_refinements!(state)
-    end
     @invoke(CC.widen_call_result(analyzer::ToplevelAbstractAnalyzer, si::CC.StmtInfo,
         state::CC.CallInferenceState, sv::CC.AbsIntState)) && return true
-    mentions && return false
+    matches = state.matches
+    call_signature_mentions_missing(matches) && return false
     has_missing_member(state.rettype) || return false
-    speculative && return true
+    has_speculative_missing_match(matches) && return true
     state.func === getproperty && return false
     return Bool <: CC.widenconst(state.rettype) && has_base_method_match(matches)
 end
@@ -871,18 +960,6 @@ function is_speculative_missing_match(@nospecialize(atype), match::Core.MethodMa
         argtype === Any && param === Missing && return true
     end
     return false
-end
-
-function drop_missing_slot_refinements!(state::CC.CallInferenceState)
-    refinements = state.slotrefinements
-    refinements === nothing && return nothing
-    for i = eachindex(refinements)
-        refinement = refinements[i]
-        if refinement !== nothing && has_missing_member(refinement)
-            refinements[i] = nothing
-        end
-    end
-    return nothing
 end
 
 function has_missing_member(@nospecialize t)
@@ -1334,7 +1411,7 @@ function transparent_getproperty_slot_id!(
         slot.id ≤ 3 && return slot.id
         slot.id ∈ seen_slots && return nothing
         push!(seen_slots, slot.id)
-        pc_assign = @something CC.find_dominating_assignment(slot.id, pc, sv) return nothing
+        pc_assign = @something find_dominating_assignment(slot.id, pc, sv) return nothing
         stmt = sv.src.code[pc_assign]
         if Meta.isexpr(stmt, :(=)) && length(stmt.args) == 2
             lhs, rhs = stmt.args

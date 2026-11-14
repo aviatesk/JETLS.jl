@@ -759,6 +759,32 @@ end
     @test (body_start + 5) in seen_lines
 end
 
+catch_binding_inner_fuzz() = error("caught")
+function catch_binding_fuzz()
+    try
+        catch_binding_inner_fuzz()
+    catch err
+        return err
+    end
+end
+
+@testset "stepping over a caught error skips the exception binding" begin
+    body_start = first(methods(catch_binding_fuzz)).line
+    for cmd in (:n, :nc)
+        frame = JuliaInterpreter.enter_call(catch_binding_fuzz)
+        frame, pc = JuliaInterpreter.debug_command(frame, :s)
+        @test JuliaInterpreter.scopeof(frame).name === :catch_binding_inner_fuzz
+        # `err = the_exception` is on the `try` call's line and is not a stop:
+        # the error lands on `return err`, 4 lines below the signature
+        frame, pc = JuliaInterpreter.debug_command(frame, cmd)
+        @test JuliaInterpreter.scopeof(frame).name === :catch_binding_fuzz
+        @test JuliaInterpreter.linenumber(frame) == body_start + 4
+        @test JuliaInterpreter.is_return(JuliaInterpreter.pc_expr(frame))
+        @test JuliaInterpreter.debug_command(frame, cmd) === nothing
+        @test get_return(frame) == ErrorException("caught")
+    end
+end
+
 @testset "uncaught errors leave the frame tree intact" begin
     frame = JuliaInterpreter.enter_call(uncaught_thrower_fuzz, 1)
     frame, pc = JuliaInterpreter.debug_command(frame, :n)

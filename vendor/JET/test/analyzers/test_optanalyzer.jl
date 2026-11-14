@@ -508,10 +508,32 @@ issue863_mapfoldl(xs) = mapfoldl(last, *, xs)
         end
     end
     let reports = get_reports_with_test(report_opt(issue863_mapfoldl, (Vector{Any},)))
+        # JuliaLang/julia#64375 moved `BottomRF` outside the mapping
+        RF = VERSION ≥ v"1.15.0-DEV.207" ?
+            Base.BottomRF{Base.MappingRF{typeof(last), typeof(*)}} :
+            Base.BottomRF{typeof(*)}
         @test any(reports) do r
             r isa JET.RuntimeDispatchReport &&
-            r.sig.tt === Tuple{Base.BottomRF{typeof(*)}, Any, Any}
+            r.sig.tt === Tuple{RF, Any, Any}
         end
+    end
+end
+
+@testset "global callees in optimized IR" begin
+    # Julia ≥ 1.14 refers to globals by `Core.BindingPartition` in optimized IR
+    let r = only(get_reports_with_test(report_opt((Any,)) do x
+            getsomething(x)
+        end))
+        @test r isa RuntimeDispatchReport
+        @test r.sig.tt === Tuple{typeof(getsomething), Any}
+        @test get_msg(r) == "runtime dispatch detected: $(@__MODULE__).getsomething(x::Any)::Any"
+    end
+    let r = only(get_reports_with_test(report_opt((Any,)) do x
+            x.field
+        end))
+        @test r isa RuntimeDispatchReport
+        @test r.sig.tt === Tuple{typeof(getproperty), Any, Symbol}
+        @test get_msg(r) == "runtime dispatch detected: (x::Any).field::Any"
     end
 end
 

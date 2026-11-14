@@ -313,24 +313,26 @@ end
 
 function maybe_eval_with_scope(@nospecialize(f), fargs::Vector{Any}, frame::Frame)
     @static isdefinedglobal(Core.IR, :EnterNode) || return nothing
+    # Only scopes entered by *interpreted* code need to be installed here. A scope that is
+    # already active on the running task (`Core.current_scope()`) is visible to any native call
+    # we make anyway. That is the common case: on Julia 1.13+ `include` and the REPL run code
+    # inside a scope, and lowering + evaluating an expression per call costs ~70 µs.
+    isempty(frame.framedata.current_scopes) && return nothing
     newscope = Core.current_scope()
-    if newscope !== nothing || !isempty(frame.framedata.current_scopes)
-        for scope in frame.framedata.current_scopes
-            newscope = Scope(newscope, scope.values...)
-        end
-        # `Core.eval` only installs the dynamic scope (a lowering construct) and so runs in
-        # the latest world; pin the call itself to the frame's world inside the expression.
-        # Quote every spliced value: AST-significant arguments (e.g. the `Symbol` property name
-        # in `getproperty(mod, :name)`) must enter the expression as literals, not be re-evaluated
-        # as variable references.
-        call = Expr(:call, invoke_in_world, frame.world, QuoteNode(f))
-        for a in fargs
-            push!(call.args, QuoteNode(a))
-        end
-        ex = Expr(:tryfinally, call, nothing, newscope)
-        return Some{Any}(Core.eval(moduleof(frame), ex))
+    for scope in frame.framedata.current_scopes
+        newscope = Scope(newscope, scope.values...)
     end
-    return nothing
+    # `Core.eval` only installs the dynamic scope (a lowering construct) and so runs in
+    # the latest world; pin the call itself to the frame's world inside the expression.
+    # Quote every spliced value: AST-significant arguments (e.g. the `Symbol` property name
+    # in `getproperty(mod, :name)`) must enter the expression as literals, not be re-evaluated
+    # as variable references.
+    call = Expr(:call, invoke_in_world, frame.world, QuoteNode(f))
+    for a in fargs
+        push!(call.args, QuoteNode(a))
+    end
+    ex = Expr(:tryfinally, call, nothing, newscope)
+    return Some{Any}(Core.eval(moduleof(frame), ex))
 end
 
 function evaluate_call!(interp::NonRecursiveInterpreter, frame::Frame, call_expr::Expr, enter_generated::Bool=false)

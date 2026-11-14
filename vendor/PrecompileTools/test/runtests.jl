@@ -4,6 +4,17 @@ using Pkg
 using UUIDs
 using Base: specializations
 
+# Recompiled code can be added behind the invalidated entry, so check every entry.
+function has_valid_ci(mi, world)
+    isdefined(mi, :cache) || return false
+    ci = mi.cache
+    while true
+        ci.min_world <= world <= ci.max_world && return true
+        isdefined(ci, :next) || return false
+        ci = ci.next
+    end
+end
+
 @testset "PrecompileTools.jl" begin
     push!(LOAD_PATH, @__DIR__)
 
@@ -85,6 +96,18 @@ using Base: specializations
         @test occursin("$(modscope)f(::$Int)", str)
         @test occursin("$(modscope)f(::String)", str)
     end
+    # PRECOMPILETOOLS_TIMING prints the time of each workload statement and the total
+    mktemp() do path, io
+        withenv("PRECOMPILETOOLS_TIMING" => "1") do
+            redirect_stdout(io) do
+                include(joinpath(@__DIR__, "PC_E", "src", "PC_E.jl"))
+            end
+        end
+        close(io)
+        str = read(path, String)
+        @test occursin(r"\d+ ms  ", str)
+        @test occursin("PC_E @compile_workload: ", str)
+    end
     PrecompileTools.verbose[] = oldval
 
     using NotToplevel
@@ -124,8 +147,21 @@ using Base: specializations
     @test Set([mis[1], mis[2]]) ⊆ PrecompileTools.invalidation_leaves(invs, [])
     invs = Any[mis[1], 1, mis[2], "jl_method_table_insert", mis[2], "invalidate_mt_cache", m, "jl_method_table_insert"]
     @test PrecompileTools.invalidation_leaves(invs, []) == Set([mis[1], mis[2]])
-    invs = Any[m, "method_globalref", cis[1], nothing, Tuple{}, "insert_backedges_callee", cis[2], Any[m], cis[3], "verify_methods", cis[4]]
+    # Code cached by another interpreter is not recompiled
+    foreignci = Core.CodeInstance(Core.Compiler.get_ci_mi(cis[5]), :foreign, Any, Any, nothing, nothing, Int32(0),
+                                  UInt(1), typemax(UInt), UInt32(0), nothing, nothing, Core.svec())
+    invs = Any[m, "method_globalref", cis[1], nothing, Tuple{}, "insert_backedges_callee", cis[2], Any[m], cis[3], "verify_methods", cis[4],
+               foreignci, "verify_methods", cis[4]]
     @test PrecompileTools.invalidation_leaves([], invs) == Set(Core.Compiler.get_ci_mi.(cis[1:3]))
+
+    # Compiler, lowering and code-loading code is not recompiled
+    @test !PrecompileTools.runs_in_frozen_world(mis[1])
+    getmi(f, argtypes) = Core.Compiler.specialize_method(which(f, argtypes), Tuple{typeof(f), argtypes...}, Core.svec())
+    @test PrecompileTools.runs_in_frozen_world(getmi(Core.Compiler.widenconst, (Core.Const,)))
+    @test PrecompileTools.runs_in_frozen_world(getmi(Base.__require, (Base.PkgId,)))
+    if isdefined(Base, :JuliaLowering)
+        @test PrecompileTools.runs_in_frozen_world(getmi(Base.JuliaLowering.lower, (Module, Base.Syntax)))
+    end
 
     # Coverage isn't on during package precompilation, so let's test a few things here
     PrecompileTools.precompile_mi(mis[1])
@@ -145,10 +181,7 @@ using Base: specializations
                     nbits(::Int8) = 8
                     nbits(::Int16) = 16
                     call_nbits(c) = nbits(only(c))
-                    begin
-                        Base.Experimental.@force_compile
-                        call_nbits(Any[Int8(5)])
-                    end
+                    precompile(call_nbits, (Vector{Any},))
                     end
                     """)
                 end
@@ -193,7 +226,8 @@ using Base: specializations
                 m = only(methods(mod1.call_nbits))
                 mi = first(specializations(m))
                 wc = Base.get_world_counter()
-                @test recompile ? mi.cache.max_world >= wc : mi.cache.max_world < wc
+                @test isdefined(mi, :cache)
+                @test has_valid_ci(mi, wc) == recompile
             end
 
             # Edge-invalidation
@@ -216,10 +250,7 @@ using Base: specializations
                     module $pkg2
                     using $pkg1
                     call_nbits(c) = $pkg1.nbits(only(c))
-                    begin
-                        Base.Experimental.@force_compile
-                        call_nbits(Any[Int8(5)])
-                    end
+                    precompile(call_nbits, (Vector{Any},))
                     end
                     """)
                 end
@@ -259,7 +290,8 @@ using Base: specializations
                 m = only(methods(mod2.call_nbits))
                 mi = first(specializations(m))
                 wc = Base.get_world_counter()
-                @test recompile ? mi.cache.max_world >= wc : mi.cache.max_world < wc
+                @test isdefined(mi, :cache)
+                @test has_valid_ci(mi, wc) == recompile
             end
 
         end

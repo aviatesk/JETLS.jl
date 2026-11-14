@@ -296,5 +296,20 @@ julia> include("src/MyPackage.jl");
 ```
 
 This will only show the direct- or runtime-dispatched method instances that got precompiled (omitting their inferrable callees).
+
+## Timing a workload
+
+To see which parts of a `@compile_workload` take the most time, set `PRECOMPILETOOLS_TIMING=1` when precompiling.
+Each top-level statement of the workload then prints its time, and the whole workload prints a `@time` summary:
+
+```
+$ PRECOMPILETOOLS_TIMING=1 julia -e 'using MyPackage'
+      45 ms  prob = ODEProblem(lorenz, u0, tspan)
+      22 ms  remake(prob, u0 = [2.0, 0.0, 0.0])
+MyPackage @compile_workload: 0.749697 seconds (5.64 M allocations: 446.642 MiB, 7.17% gc time, 96.55% compilation time)
+```
+
+The variable does not make a cache stale, so for a package that is already precompiled, force it with
+`Base.compilecache(Base.identify_package("MyPackage"))`.
 For a more comprehensive list of all items stored in the compile_workload file, see
 [PkgCacheInspector](https://github.com/timholy/PkgCacheInspector.jl).
