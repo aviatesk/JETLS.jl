@@ -882,6 +882,14 @@ end
         end
         """)
         @test isempty(diagnostics)
+
+        let (text, positions) = JETLSCore.get_text_and_positions("""
+                func(xxx) = `echo \$xxx \$│yyy│`
+                """)
+            diagnostic = only(get_lowering_diagnostics(text))
+            @test diagnostic.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
+            @test diagnostic.range == Range(; start=positions[1], var"end"=positions[2])
+        end
     end
 
     @testset "Unused bindings within macro code" begin

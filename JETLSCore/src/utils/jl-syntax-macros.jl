@@ -155,7 +155,7 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Base => Symbol("@locals"),
     Base => Symbol("@noinline"),
     Base => Symbol("@nospecialize"),
-    # src/utils/jl-syntax-macros.jl, except the `@atomic` macros (see their stubs)
+    # src/utils/jl-syntax-macros.jl, except the `@atomic` macros and `@cmd` (see their stubs)
     Core => Symbol("@doc"),
     Base => Symbol("@assert"),
     Base => Symbol("@assume_effects"),
@@ -555,6 +555,314 @@ function _lazy_str_source_ref(
     first_byte = JS.first_byte(text) + raw_start - 1
     last_byte = JS.first_byte(text) + raw_after - 2
     return BS.SourceRef(src.code, UInt32(first_byte), UInt32(last_byte))
+end
+
+# New-style implementation of `Core.@cmd`, which cmd literals are parsed to. As with
+# `@lazy_str`, the `$` interpolations of the literal are not parsed into child nodes yet,
+# and Base's `shell_parse` parses them out of the string, which leaves them with
+# line-level provenance only. They are instead parsed here and given their source ranges.
+# The rest of the command syntax depends on the Julia version (e.g. pipelines and
+# redirections), so it is still left to `shell_parse`: the command is parsed with a
+# placeholder in place of each interpolation, and the placeholders in the result are then
+# replaced with the interpolations.
+#
+# This is not listed in `NEW_STYLE_MACRO_BINDINGS`, so that `remove_macrocalls` still
+# replaces cmd literals (see `strip_cmd_literal`) and explicit `@cmd` calls, whose
+# interpolations can only be attributed to their string as a whole.
+function Core.var"@cmd"(__context__::BS.MacroContext, text::SyntaxTree)
+    mc = __context__.macrocall
+    if !(JS.head(text) === :value && text.value isa String)
+        push_macro_error!(text, "`@cmd` expects a string literal")
+        return JL.@ast(__context__, mc, text)
+    end
+    value = text.value::String
+    interps, errmsg = _cmd_interpolations(
+        text, value, _cmd_literal_source_map(text, value), mc.context, false)
+    parsed = if errmsg === nothing
+        _cmd_parse(text, value, interps)
+    else
+        push_macro_error!(text, "`@cmd`: $errmsg")
+        nothing
+    end
+    src = _macro_generated_source(__context__)
+    if parsed === nothing
+        # Recovery: keep the interpolations analyzed, and the result a `Cmd`.
+        exs = _cmd_interpolation_tuples(interps)
+        return JL.@ast(__context__, src, [:block
+            exs...
+            [:call [:top "cmd_gen"::identifier] [:tuple [:tuple]]]])
+    end
+    cmd = _cmd_fill_interpolations(JL.expr_to_est(parsed, src), interps)
+    # `shell_parse` returns either the arguments of `cmd_gen` or a complete pipeline.
+    parsed.head === :tuple || return cmd
+    return JL.@ast(__context__, src, [:call [:top "cmd_gen"::identifier] cmd])
+end
+
+function Core.var"@cmd"(__context__::BS.MacroContext, args::SyntaxTree...)
+    mc = __context__.macrocall
+    push_macro_error!(mc, "`@cmd` expects exactly one string argument")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::value)
+    return JL.@ast(__context__, mc, [:block args...])
+end
+
+# Replace the cmd literal `st0` with a `block` of its interpolations, or return `nothing`
+# if it has none. Nested cmd literals are replaced as well, since one written with escaped
+# backticks or across dedented lines can't be located from its own source text.
+function strip_cmd_literal(st0::SyntaxTree)
+    text = @something _cmd_literal_text(st0) return nothing
+    value = text.value::String
+    '$' in value || return nothing
+    return _cmd_strip(st0, text, value, _cmd_literal_source_map(text, value))
+end
+
+function _cmd_literal_text(st0::SyntaxTree)
+    (is_cmd0(st0) && JS.numchildren(st0) == 3) || return nothing
+    text = st0[3]
+    return JS.head(text) === :value && text.value isa String ? text : nothing
+end
+
+function _cmd_strip(
+        st0::SyntaxTree, text::SyntaxTree, value::String,
+        source_map::Union{Nothing,Vector{Int}}
+    )
+    interps, _ = _cmd_interpolations(text, value, source_map, st0.context, true)
+    isempty(interps) && return nothing
+    exs = _cmd_interpolation_tuples(interps)
+    return JL.@ast(_, st0, [:block exs...])
+end
+
+# Each interpolation is evaluated in a tuple, e.g. `xs...` may be interpolated
+function _cmd_interpolation_tuples(interps::Vector{Pair{UnitRange{Int},SyntaxTree}})
+    exs = SyntaxList()
+    for (_, ex) in interps
+        push!(exs, JL.@ast(_, ex, [:tuple ex]))
+    end
+    return exs
+end
+
+# The source map of a cmd literal: the byte of the source file that each byte index of its
+# command `value`, and the index past its end, was unescaped from, or `nothing` for a
+# literal that isn't located that precisely
+function _cmd_literal_source_map(text::SyntaxTree, value::String)
+    is_synthesized_value(text) && return nothing
+    source_map = @something _cmd_source_map(value, String(JS.sourcetext(text))) return nothing
+    source_map .+= JS.first_byte(text) - 1
+    return source_map
+end
+
+# Compose the source map of the cmd literal with the string `nested`, parsed from the
+# command `value`, with `source_map`, that of `value`
+function _cmd_nested_source_map(
+        nested::SyntaxTree, value::String, source_map::Union{Nothing,Vector{Int}}
+    )
+    source_map === nothing && return nothing
+    firstidx = JS.first_byte(nested)
+    nested_map = @something _cmd_source_map(
+        nested.value::String, value[firstidx:JS.last_byte(nested)]) return nothing
+    for i in eachindex(nested_map)
+        nested_map[i] = source_map[firstidx - 1 + nested_map[i]]
+    end
+    return nested_map
+end
+
+# The source map of a cmd literal in terms of the indices of its source text `raw`, which
+# is parsed again for the chunks that dedenting leaves of it. They are unescaped here as
+# `JS.unescape_raw_string` does. Return `nothing` if `raw` isn't a cmd literal or doesn't
+# unescape to `value`, e.g. for a nested literal with dedented lines.
+function _cmd_source_map(value::String, raw::String)
+    startswith(raw, '`') || return nothing
+    stream = JS.ParseStream(raw; version=PARSE_VERSION)
+    JS.parse!(stream; rule=:atom)
+    source_map = Int[]
+    afteridx = firstindex(raw)
+    for tc in TokenCursor(stream)
+        (JS.kind(tc) === JS.K"CmdString" && !JS.is_trivia(this(tc))) || continue
+        _cmd_unescape_chunk!(
+            source_map, value, raw, JS.first_byte(tc), JS.last_byte(tc)) || return nothing
+        afteridx = JS.last_byte(tc) + 1
+    end
+    length(source_map) == ncodeunits(value) || return nothing
+    push!(source_map, afteridx)
+    return source_map
+end
+
+function _cmd_unescape_chunk!(
+        source_map::Vector{Int}, value::String, raw::String, i::Int, stopidx::Int
+    )
+    buf = codeunits(raw)
+    while i <= stopidx
+        c = buf[i]
+        if c != UInt8('\\')
+            rawidx = i
+            if c == UInt8('\r')
+                i < stopidx && buf[i+1] == UInt8('\n') && (i += 1)
+                c = UInt8('\n')
+            end
+            _cmd_push_source!(source_map, value, c, rawidx) || return false
+            i += 1
+            continue
+        end
+        j = i
+        while j <= stopidx && buf[j] == UInt8('\\')
+            j += 1
+        end
+        nbackslash = j - i
+        # Backslashes before a backtick or the end of the chunk are themselves escaped
+        escaped = j > stopidx || buf[j] == UInt8('`')
+        for k = 0:(escaped ? nbackslash ÷ 2 : nbackslash)-1
+            _cmd_push_source!(
+                source_map, value, UInt8('\\'), escaped ? i + 2k : i + k) || return false
+        end
+        if j <= stopidx
+            # An escaped backtick begins at its backslash
+            rawidx = escaped && isodd(nbackslash) ? j - 1 : j
+            _cmd_push_source!(source_map, value, buf[j], rawidx) || return false
+            j += 1
+        end
+        i = j
+    end
+    return true
+end
+
+function _cmd_push_source!(
+        source_map::Vector{Int}, value::String, byte::UInt8, rawidx::Int
+    )
+    idx = length(source_map) + 1
+    (idx <= ncodeunits(value) && codeunit(value, idx) == byte) || return false
+    push!(source_map, rawidx)
+    return true
+end
+
+# The source of `value[startidx:stopbyte]`, or else `text` as a whole
+function _cmd_source(
+        text::SyntaxTree, value::String, source_map::Union{Nothing,Vector{Int}},
+        startidx::Int, stopbyte::Int
+    )
+    source_map === nothing && return text
+    src = BS.sourceref(text)
+    src isa BS.SourceRef || return text
+    afteridx = nextind(value, thisind(value, stopbyte))
+    return BS.SourceRef(src.code,
+        UInt32(source_map[startidx]), UInt32(source_map[afteridx] - 1))
+end
+
+# The interpolations of the command `value` of the cmd literal with the string `text`,
+# each with the range of `value` that it is parsed from, and the error that parsing them
+# stopped with, if any. This tracks the quoting and escaping of `shell_parse` only as far
+# as they decide whether a `$` interpolates. See `_cmd_copy_with_source` for `context` and
+# `strip_nested`.
+function _cmd_interpolations(
+        text::SyntaxTree, value::String, source_map::Union{Nothing,Vector{Int}},
+        context::BS.SyntaxContext, strip_nested::Bool
+    )
+    interps = Pair{UnitRange{Int},SyntaxTree}[]
+    in_single_quotes = in_double_quotes = false
+    idx = firstindex(value)
+    stopidx = lastindex(value)
+    while idx <= stopidx
+        c = value[idx]
+        nextidx = nextind(value, idx)
+        if !in_single_quotes && c == '$'
+            # `shell_parse` rejects these, so leave them to it
+            (nextidx > stopidx || isspace(value[nextidx])) && break
+            if startswith(SubString(value, nextidx), "var\"")
+                # `shell_parse` takes this as the name `var` followed by a quoted string
+                srcref = _cmd_source(text, value, source_map, nextidx, nextidx + 2)
+                parsed = SyntaxTree(:identifier, nothing, "var", srcref, context)
+                afteridx = nextidx + 3
+            else
+                node, afteridx = try
+                    JS.parseatom(SyntaxTree, value, nextidx;
+                        version=PARSE_VERSION, ignore_errors=false)
+                catch err
+                    msg = err isa JS.ParseError && !isempty(err.diagnostics) ?
+                        first(err.diagnostics).message :
+                        first(split(sprint(locked_showerror, err), '\n'))
+                    return interps, "failed to parse interpolation: $msg"
+                end
+                parsed = _cmd_copy_with_source(
+                    node, text, value, source_map, context, strip_nested)
+            end
+            push!(interps, nextidx:afteridx-1 => parsed)
+            idx = afteridx
+            continue
+        elseif !in_double_quotes && c == '\''
+            in_single_quotes = !in_single_quotes
+        elseif !in_single_quotes && c == '"'
+            in_double_quotes = !in_double_quotes
+        elseif !in_single_quotes && c == '\\' && nextidx <= stopidx
+            if !in_double_quotes || value[nextidx] in ('"', '$', '\\')
+                nextidx = nextind(value, nextidx)
+            end
+        end
+        idx = nextidx
+    end
+    return interps, nothing
+end
+
+# Copy `node`, parsed from the command `value`, along with its source, into `context`,
+# the context of the cmd literal. With `strip_nested`, the cmd literals in `node` are
+# also replaced with their interpolations, as by `strip_cmd_literal`.
+function _cmd_copy_with_source(
+        node::SyntaxTree, text::SyntaxTree, value::String,
+        source_map::Union{Nothing,Vector{Int}}, context::BS.SyntaxContext, strip_nested::Bool
+    )
+    srcref = _cmd_source(text, value, source_map, JS.first_byte(node), JS.last_byte(node))
+    if JS.is_leaf(node)
+        # The parser locates a macro call in `value` rather than in the source file
+        val = node.value isa LineNumberNode ? BS.first_linenode(srcref) : node.value
+        # `adopt_scope` would keep the `unexpanded` of the scope-less parse context
+        return BS.@mknode(node; value=val, source=srcref, context)
+    end
+    children = SyntaxList()
+    for child in JS.children(node)
+        push!(children, _cmd_copy_with_source(
+            child, text, value, source_map, context, strip_nested))
+    end
+    copied = BS.@mknode(node; source=srcref, children, context)
+    strip_nested || return copied
+    nested = @something _cmd_literal_text(node) return copied
+    nested_value = nested.value::String
+    '$' in nested_value || return copied
+    nested_map = _cmd_nested_source_map(nested, value, source_map)
+    return @something _cmd_strip(copied, copied[3], nested_value, nested_map) copied
+end
+
+_cmd_placeholder(i::Int) = "__cmd_interpolation_$(i)__"
+
+function _cmd_parse(
+        text::SyntaxTree, value::String, interps::Vector{Pair{UnitRange{Int},SyntaxTree}}
+    )
+    io = IOBuffer()
+    lastidx = firstindex(value)
+    for (i, (range, _)) in enumerate(interps)
+        # Parenthesized so that the placeholder ends where the interpolation does
+        write(io, SubString(value, lastidx, first(range) - 1), '(', _cmd_placeholder(i), ')')
+        lastidx = last(range) + 1
+    end
+    write(io, SubString(value, lastidx))
+    template = String(take!(io))
+    return try
+        first(Base.shell_parse(template; special = Base.shell_special))::Expr
+    catch err
+        msg = replace(sprint(locked_showerror, err), "`$template`" => "`$value`")
+        push_macro_error!(text, "`@cmd`: $msg")
+        nothing
+    end
+end
+
+function _cmd_fill_interpolations(
+        st::SyntaxTree, interps::Vector{Pair{UnitRange{Int},SyntaxTree}}
+    )
+    JS.is_leaf(st) && return st
+    return BS.mapchildren(st) do c::SyntaxTree
+        JS.head(c) === :identifier || return _cmd_fill_interpolations(c, interps)
+        name = name_val(c)
+        for (i, (_, ex)) in enumerate(interps)
+            _cmd_placeholder(i) == name && return ex
+        end
+        return c
+    end
 end
 
 # Stub for `Base.@assert`. Mirrors the real expansion

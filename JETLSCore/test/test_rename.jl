@@ -391,6 +391,41 @@ end
         end
     end
 
+    # aviatesk/JETLS.jl#1052
+    @testset "rename with cmd literal" begin
+        for (code, n) in (
+                """
+                func(│xxx│) = `echo \$│xxx│ --flag=\$(│xxx│)`
+                """ => 6,
+                # a cmd literal nested in a dedented one
+                """
+                func(│xxx│) = ```
+                    echo \$(read(`git log \\
+                        --format=\$│xxx│`, String))
+                    ```
+                """ => 4,
+                # a cmd literal in the arguments of a macro call in an interpolation
+                """
+                func(│xxx│) = ```
+                    echo \$(read(@static(Sys.isunix() ?
+                        `git log \\
+                            --format=\$│xxx│` : `cmd /c echo fallback`), String))
+                    ```
+                """ => 4,
+            )
+            (; fi, positions, furi, rename_binding) = local_rename_testcase(server, code, n, @__MODULE__)
+            renamed = replace(JETLSCore.document_text(fi), "xxx" => "yyy")
+            for pos in positions
+                (; result, error) = rename_binding(pos, "yyy")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test apply_edits(fi, edits) == renamed
+                end
+            end
+        end
+    end
+
     @testset "rename across @static branches" begin
         # A use in a `@static` branch not selected for the current platform must be
         # renamed too — otherwise the rename leaves that branch referring to the old name,

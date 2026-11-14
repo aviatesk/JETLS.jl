@@ -496,14 +496,9 @@ function _remove_macrocalls(
             # so there's no need to remove them here
             return st0, false
         elseif is_cmd0(st0)
-            # `` `foo` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where
-            # `CmdString` is an opaque leaf JuliaLowering has no rule for at
-            # statement position. Strip-to-block would result in lowering failure,
-            # so leave the macrocall intact and let `Core.@cmd` expansion run.
-            # Expansion collapses interpolations' provenance, which means features like
-            # rename/references can't pinpoint a name used inside a cmd literal --
-            # but binding occurrence analysis still get correct results.
-            return st0, false
+            stripped = @something strip_cmd_literal(st0) return st0, false
+            return first(_remove_macrocalls(
+                context_module, world, stripped; strip_static)), true
         end
         new_children = SyntaxList()
         for i = 2:JS.numchildren(st0)
@@ -609,6 +604,10 @@ are resolved from `context_module`; calls whose macro object matches a binding i
 `NEW_STYLE_MACRO_BINDINGS` are preserved. The transformed tree can then be fed into
 scope/binding resolution to drive LSP features such as find-references,
 document-highlight, rename, and go-to-definition.
+
+A cmd literal with `\$` interpolations is replaced with a `block` of them in the same way.
+The parser leaves them unparsed in the string of the literal, so they are parsed here
+with their source locations, which also lets the macro calls in them be converted.
 
 With `strip_static=true`, `@static` conditionals are also rewritten to plain runtime
 conditionals (keeping every branch) rather than expanded to the single branch selected

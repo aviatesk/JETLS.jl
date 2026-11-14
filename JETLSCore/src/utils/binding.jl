@@ -947,13 +947,24 @@ function select_struct_inner_constructor_binding(
     return binding[]
 end
 
+function is_cmd_interpolation_offset(st0::SyntaxTree, offset::Int)
+    stripped = @something strip_cmd_literal(st0) return false
+    return any(JS.children(stripped)) do interp::SyntaxTree
+        range = JS.byte_range(interp)
+        return first(range) ≤ offset ≤ last(range) + 1
+    end
+end
+
 function select_macrocall_binding(
         st0::SyntaxTree, offset::Int, context_module::Module, world::UInt;
         soft_scope::Bool = false
     )
+    # The macro name of a cmd literal is not written in the source and spans the literal,
+    # including its interpolations.
+    cursor = offset
     is_macrocall_name = (offset::Int) -> (st0′::SyntaxTree) ->
         JS.head(st0′) === :macrocall && JS.numchildren(st0′) ≥ 1 && !is_doc0(st0′) &&
-        offset in JS.byte_range(st0′[1])
+        offset in JS.byte_range(st0′[1]) && !is_cmd_interpolation_offset(st0′, cursor)
     bas = byte_ancestors(is_macrocall_name(offset), st0, offset)
     if isempty(bas)
         # Support cases like `@macro│` where cursor is at the end

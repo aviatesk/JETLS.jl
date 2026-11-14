@@ -84,6 +84,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed [type inlay hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types), hover, and other features that show inferred types failing on Julia 1.14 and later for code that uses `ccall`, such as the `Sockets` standard library.
 
+- Fixed find-references, document-highlight, rename, hover, and go-to-definition for identifiers interpolated into command literals, such as `a` in `` `echo $a` ``.
+  Find-references and document-highlight no longer cover the whole line of the command literal for them, and rename no longer replaces that line with the new name.
+  These features now also work with the cursor on such an identifier.
+  Undefined names interpolated into command literals are now also reported by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var).
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1052)
+
 ## 2026-11-04
 
 - Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)
