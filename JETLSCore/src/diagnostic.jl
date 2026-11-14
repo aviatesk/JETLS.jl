@@ -1591,7 +1591,8 @@ function analyze_deprecated_bindings0!(
             analyze_deprecated_import!(diagnostics, fi, st0′, context_module, world,
                 postprocessor, cache)
             return traversal_no_recurse
-        elseif kind === :macrocall && JS.numchildren(st0′) ≥ 1
+        elseif (kind === :macrocall && JS.numchildren(st0′) ≥ 1 &&
+                !is_synthesized_macro_name(st0′[1]))
             analyze_deprecated_macro_name!(diagnostics, fi, st0′[1], context_module, world,
                 postprocessor, cache)
         end

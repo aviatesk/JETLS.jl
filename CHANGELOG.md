@@ -90,6 +90,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Undefined names interpolated into command literals are now also reported by [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var).
   (Closed https://github.com/aviatesk/JETLS.jl/issues/1052)
 
+- Fixed rename being offered with the cursor on a command literal or on an integer literal beyond `Int64`, where it replaced every such literal with the new name.
+  Such a literal as a whole is no longer a target of rename, find-references, document-highlight, hover, or go-to-definition.
+
 ## 2026-11-04
 
 - Commit: [`2f6c9cc`](https://github.com/aviatesk/JETLS.jl/commit/2f6c9cc)

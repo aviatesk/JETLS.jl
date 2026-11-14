@@ -311,7 +311,6 @@ function is_new_style_macrocall0(
     end
 end
 
-is_doc0(st0::SyntaxTree) = is_macrocall_st0(st0, "@doc"; from=Core)
 is_doc0_any(st0::SyntaxTree) = is_macrocall_st0(st0, "@doc") # Explicit `@doc` can have any module set.
 
 is_documenting_doc0(st0::SyntaxTree) = JS.numchildren(st0) ≥ 4 && is_doc0_any(st0)
@@ -325,6 +324,12 @@ function is_unsplittable_doc0(st0::SyntaxTree)
 end
 
 is_cmd0(st0::SyntaxTree) = is_macrocall_st0(st0, "@cmd"; from=Core)
+
+# The parser synthesizes the name of the macro that a literal is parsed to, i.e. `Core.@cmd`,
+# `Core.@doc`, and `Core.@big_str` etc. for integer literals beyond `Int64`. Such a name
+# isn't written in the source, and spans the whole macrocall.
+is_synthesized_macro_name(macro_name::SyntaxTree) =
+    JS.head(macro_name) === :identifier && macro_name.mod !== nothing
 
 is_static0(context_module::Module, world::UInt, st0::SyntaxTree) =
     is_macrocall_binding0(context_module, world, st0, Base, Symbol("@static"))
