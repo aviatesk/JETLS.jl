@@ -250,6 +250,15 @@ end
         @test any(t -> t.line == 0 && t.char == 30 && t.len == 7  && t.type == TYPE_UNSPECIFIED, tokens) # nothing
     end
 
+    @testset "literals parsed to macro calls" begin
+        # These cmd literals are as long as the name of `@cmd`, which they are parsed to
+        tokens = tokens_for("f(c) = (`\$c`, `ls`)\n")
+        @test length(tokens) == 3
+        @test any(t -> t.char == 0  && t.len == 1 && t.type == TYPE_UNSPECIFIED, tokens) # f
+        @test any(t -> t.char == 2  && t.len == 1 && t.type == TYPE_PARAMETER,   tokens) # c def
+        @test any(t -> t.char == 10 && t.len == 1 && t.type == TYPE_PARAMETER,   tokens) # c use
+    end
+
     @testset "range filtering" begin
         # Two top-level functions; restrict the range to the second one.
         code = """

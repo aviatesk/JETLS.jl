@@ -698,9 +698,10 @@ function collect_macrocall_occurrences!(
     traverse(st0) do st::SyntaxTree
         JS.head(st) === :macrocall || return nothing
         JS.numchildren(st) ≥ 1 || return nothing
+        macrocall_name = st[1]
+        is_synthesized_macro_name(macrocall_name) && return nothing
         should_resolve_macrocall(
             context_module, world, st0, JS.byte_range(st)) || return traversal_no_recurse
-        macrocall_name = st[1]
         (; ctx3, st3) = try
             jl_lower_for_scope_resolution(
                 context_module, world, macrocall_name; soft_scope)

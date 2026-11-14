@@ -821,16 +821,19 @@ end
             @test JS.source_line(BS.sourceref(only(defs))) == 1
             return true
         end == 4
+    end
+
+    # The name of the macro that a literal is parsed to is not written in the source
+    @testset "synthesized macro name" begin
         @test with_target_binding("""
             function f(x)
                 `ec│ho \$x --flag│=\$(x)`
+                return 1701411834604692317316873037158841057│28
             end
         """) do _, res
-            @test !isnothing(res)
-            (; ctx3, binding) = res
-            @test JL.get_binding(ctx3, binding).name == "@cmd"
+            @test isnothing(res)
             return true
-        end == 2
+        end == 3
     end
 end
 

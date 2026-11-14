@@ -707,6 +707,17 @@ end
             @test rename_prep.placeholder == "my macro"
             @test rename_prep.range == Range(; start=positions[1], var"end"=positions[2])
         end
+
+        # The name of the macro that a literal is parsed to is not written in the source
+        let code = """
+            cmd = `ec│ho hello`
+            int = 1701411834604692317316873037158841057│28
+            """
+            (; positions, prepare) = global_rename_preparation_testcase(state, code, 2, @__MODULE__)
+            for pos in positions
+                @test isnothing(prepare(pos))
+            end
+        end
     end
 end
 

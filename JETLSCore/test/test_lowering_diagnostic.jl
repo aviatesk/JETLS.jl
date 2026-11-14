@@ -1811,6 +1811,11 @@ module TestDeprecatedBindingUser
 using ..TestDeprecatedBindingOwner
 end
 
+module TestDeprecatedCmdOwner
+macro newcmd(x) esc(x) end
+Base.@deprecate_binding var"@cmd" var"@newcmd"
+end
+
 module TestDeprecatedBindingImportOwner
 const new_value = 1
 const old_value = new_value
@@ -2055,6 +2060,9 @@ get_deprecated_macro_diagnostics(text::AbstractString, context_module::Module) =
         end
         @test isempty(get_deprecated_macro_diagnostics("ex = :(@oldmacro 1)", TestDeprecatedBindingUser))
         @test isempty(get_deprecated_binding_diagnostics("f() = TestDeprecatedBindingOwner.@newmacro 1", TestDeprecatedBindingUser))
+        # A cmd literal calls `Core.@cmd` rather than the `@cmd` of the module
+        @test isempty(get_deprecated_macro_diagnostics("f() = `echo hello`", TestDeprecatedCmdOwner))
+        @test length(get_deprecated_macro_diagnostics("f() = @cmd \"echo hello\"", TestDeprecatedCmdOwner)) == 1
     end
 
     @testset "deprecated module in an import path" begin
