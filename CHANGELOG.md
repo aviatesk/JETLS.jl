@@ -55,10 +55,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed false positive `inference/undef-global-var` diagnostics ("`X` is not defined") for the second and later names of a destructuring `const` declaration such as `const A, B = f()`, and for a `const` declared after another `const` within a top-level block such as `if`.
+- Fixed false positive [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) diagnostics ("`X` is not defined") for the second and later names of a destructuring `const` declaration such as `const A, B = f()`, and for a `const` declared after another `const` within a top-level block such as `if`.
   (Closed https://github.com/aviatesk/JETLS.jl/issues/1003)
 
-- Fixed false positive `inference/undef-global-var` diagnostics ("`#N#val` may be undefined") for definitions documented with an explicit `@doc` call, such as `@doc raw"..." f() = ...`, on Julia 1.13 and later.
+- Fixed false positive [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) diagnostics ("`#N#val` may be undefined") for definitions documented with an explicit `@doc` call, such as `@doc raw"..." f() = ...`, on Julia 1.13 and later.
+
+- Fixed false positive [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error) diagnostics on Julia 1.14 for a field access guarded by the kind of a type object, as in `T isa Union ? T.a : T` where `T` is a static parameter.
 
 ## 2026-11-14
 
