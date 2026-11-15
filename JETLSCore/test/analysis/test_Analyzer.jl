@@ -188,6 +188,8 @@ Base.getproperty(o::HelperGetproperty, s::Symbol) = helper_getproperty(o, s)
 helper_getproperty(o::HelperGetproperty, s::Symbol) = getfield(o, s)
 helper_getproperty_error(o::HelperGetproperty) = o.missing
 
+guarded_union_field(::Type{T}) where T = T isa Union ? T.a : T
+
 @testset "FieldError analysis" begin
     let result = analyze_call((Some{Int},)) do some
             some.value
@@ -269,6 +271,18 @@ helper_getproperty_error(o::HelperGetproperty) = o.missing
             T.name
         end
         @test isempty(get_reports(result))
+    end
+    # a field access guarded by the kind of an unknown type object
+    let result = analyze_call(guarded_union_field, (Type,))
+        @test isempty(get_reports(result))
+    end
+    let result = analyze_call() do
+            Type{Int}.a
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.field === :a
     end
 
     # the report must not depend on inference cache state:

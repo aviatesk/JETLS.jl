@@ -1331,6 +1331,7 @@ function report_fieldaccess!(
     end
 
     isa(name, Const) || return false
+    f === getfield && is_type_kind_getproperty_fallback(sv, obj) && return false
     s = Base.unwrap_unionall(s00)
     if CC.isType(s)
         if f === fieldtype
@@ -1376,6 +1377,22 @@ function report_fieldaccess!(
         add_new_report!(analyzer, sv.result, BoundsErrorReport(sv, objtyp, namev, offset))
     else error("invalid field analysis") end
     return true
+end
+
+@static if isdefinedglobal(Core, :TypeEgal)
+# `Type{T}` types are kinds of their own since Julia 1.14, on which Base keeps property
+# access working with `getproperty` methods that fall back to `getfield`. These methods also
+# match a receiver that is only known to be some type object, as in `T.a` guarded by
+# `T isa Union`, for which the fallback is unreachable, which inference cannot prove.
+function is_type_kind_getproperty_fallback(sv::CC.InferenceState, @nospecialize(obj))
+    def = sv.linfo.def
+    def isa Method && def.name === :getproperty && def.module === Base || return false
+    obj isa Const && return false
+    typ = CC.widenconst(obj)
+    return typ === Core.TypeEq || typ === Core.TypeEgal
+end
+else
+is_type_kind_getproperty_fallback(::CC.InferenceState, @nospecialize(_)) = false
 end
 
 # TODO Replace this hack with a general report provenance attribution system
