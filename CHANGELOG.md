@@ -53,6 +53,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed false positive `inference/undef-global-var` diagnostics ("`X` is not defined") for the second and later names of a destructuring `const` declaration such as `const A, B = f()`, and for a `const` declared after another `const` within a top-level block such as `if`.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1003)
+
+- Fixed false positive `inference/undef-global-var` diagnostics ("`#N#val` may be undefined") for definitions documented with an explicit `@doc` call, such as `@doc raw"..." f() = ...`, on Julia 1.13 and later.
+
 ## 2026-11-14
 
 - Commit: [`40a5e9c`](https://github.com/aviatesk/JETLS.jl/commit/40a5e9c)
