@@ -341,7 +341,8 @@ end
             JETLSCore.testrunner_testset_cmd(launcher, "/test/runtests.jl", "\"foo\"", 3, "/test", nothing,
                 "/tmp/result.json")
         end
-        @test cmd.exec == ["julia", "--startup-file=no", "--project=/test", "--threads=2",
+        # `julia_args` follows the options that JETLS sets, so that it can override them
+        @test cmd.exec == ["julia", "--startup-file=no", "--color=no", "--project=/test", "--threads=2",
             "-m", "TestRunner", "--verbose", "--json-file=/tmp/result.json", "--read-stdin",
             "/test/runtests.jl", "foo", "--filter-lines=3"]
         @test "JULIA_LOAD_PATH=/jetls" in cmd.env
@@ -349,9 +350,14 @@ end
     end
     let cmd = JETLSCore.testrunner_testcase_cmd(launcher, "Untitled-1", 5, nothing, "/root",
             "/tmp/result.json")
-        @test cmd.exec == ["julia", "--startup-file=no", "--threads=2",
+        @test cmd.exec == ["julia", "--startup-file=no", "--color=no", "--threads=2",
             "-m", "TestRunner", "--verbose", "--root-path=/root", "--json-file=/tmp/result.json",
             "--read-stdin", "Untitled-1", "L5"]
+    end
+    # `jetls test` leaves the colors to Julia, since its output is shown in a terminal
+    let cmd = JETLSCore.testrunner_cmd(launcher, nothing, `/test/runtests.jl`)
+        @test cmd.exec == ["julia", "--startup-file=no", "--threads=2",
+            "-m", "TestRunner", "/test/runtests.jl"]
     end
 end
 
@@ -372,13 +378,17 @@ end
         """
         server = JETLSCore.Server()
         launcher = JETLSCore.testrunner_launcher(server)::JETLSCore.TestRunnerLauncher
+        # as `Base.julia_cmd()` gives for a server that runs with `--color=yes`
+        launcher_with_color = JETLSCore.TestRunnerLauncher(
+            `$(launcher.julia) --color=yes`, launcher.julia_args, launcher.env)
         result = JETLSCore.read_testrunner_result(server, source) do json_file
-            JETLSCore.testrunner_testset_cmd(launcher, filepath, "\"foo\"", 2, project_file, nothing,
-                json_file)
+            JETLSCore.testrunner_testset_cmd(launcher_with_color, filepath, "\"foo\"", 2,
+                project_file, nothing, json_file)
         end::JETLSCore.TestRunnerResult
         @test result.stats.n_passed == 2
         @test result.stats.n_failed == 1
         @test only(result.diagnostics).line == 4
+        @test !occursin('\e', result.logs)
         @test occursin("stderr output", result.logs)
         # Julia reports fatal errors with `jl_safe_printf`, which writes directly to the file
         # descriptor 2, also after `@test_warn` restores the redirected `stderr`

@@ -359,11 +359,16 @@ function testrunner_launcher(server::Server; julia_exe::Union{Nothing,String} = 
     return TestRunnerLauncher(julia_cmd, julia_args, launcher_env)
 end
 
-# `julia_args` follows `--project` so that it can override the detected test environment.
+# `julia_args` follows the options set here so that it can override them, e.g. the detected
+# test environment. `nocolor` is for the commands whose output the server reads instead of
+# a terminal: the test process would otherwise color it when this process runs with
+# `--color=yes`, which `Base.julia_cmd` passes on, or with `FORCE_COLOR` set.
 function testrunner_cmd(launcher::TestRunnerLauncher, test_env_path::Union{Nothing,String},
-                        args::Cmd)
+                        args::Cmd; nocolor::Bool = false)
+    color_args = nocolor ? `--color=no` : ``
     project_args = isnothing(test_env_path) ? `` : `--project=$test_env_path`
-    cmd = `$(launcher.julia) --startup-file=no $project_args $(launcher.julia_args) -m TestRunner $args`
+    julia_args = `--startup-file=no $color_args $project_args $(launcher.julia_args)`
+    cmd = `$(launcher.julia) $julia_args -m TestRunner $args`
     return addenv(cmd, launcher.env...)
 end
 
@@ -377,7 +382,8 @@ function testrunner_testset_cmd(launcher::TestRunnerLauncher, filepath::String, 
     # workspace-relative include base that doesn't apply.
     root_args = isnothing(root_path) ? `` : `--root-path=$root_path`
     return testrunner_cmd(launcher, test_env_path,
-        `--verbose $root_args --json-file=$json_file --read-stdin $filepath $tsn --filter-lines=$tsl`)
+        `--verbose $root_args --json-file=$json_file --read-stdin $filepath $tsn --filter-lines=$tsl`;
+        nocolor = true)
 end
 
 # `@test` execution
@@ -387,7 +393,8 @@ function testrunner_testcase_cmd(launcher::TestRunnerLauncher, filepath::String,
     # See `testrunner_testset_cmd` for the rationale behind `--root-path`.
     root_args = isnothing(root_path) ? `` : `--root-path=$root_path`
     return testrunner_cmd(launcher, test_env_path,
-        `--verbose $root_args --json-file=$json_file --read-stdin $filepath L$tcl`)
+        `--verbose $root_args --json-file=$json_file --read-stdin $filepath L$tcl`;
+        nocolor = true)
 end
 
 function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiagnostic)

@@ -24,7 +24,7 @@ runtime = { lower = "1.14-", upper = "1.15-" }
 destination = "snapshots/v1.14"
 
 [snapshots."1.15"]
-base = "5c0cda0f29114126a414c986ed5e7729c43fd28e"
+base = "a11d632fa5768e9324c6e752b7a15196605f6b92"
 base-branch = "master"
 patches = "patches/v1.15"
 runtime = { lower = "1.15-", upper = "1.16-" }

@@ -23,6 +23,12 @@ macro lazy_str(str)
 end
 end
 
+module varargs_macro_context
+macro m(args...)
+    return nothing
+end
+end
+
 module nested_same_named_macro_context
 module Inner
 macro inline(ex)
@@ -541,7 +547,7 @@ end
             """; rule=:statement)
         transformed = JETLSCore.remove_macrocalls(new_style_macro_context, world, st0; strip_static=true)
         macrocalls = String[]
-        JETLSCore.traverse(transformed) do node::SyntaxTree
+        JETLSCore.traverse(transformed) do node
             JS.head(node) === :macrocall || return nothing
             push!(macrocalls, JS.sourcetext(node[1]))
             return nothing
@@ -561,7 +567,7 @@ end
             """; rule=:statement)
         transformed = JETLSCore.remove_macrocalls(context_module, world, st0)
         macrocalls = String[]
-        JETLSCore.traverse(transformed) do node::SyntaxTree
+        JETLSCore.traverse(transformed) do node
             JS.head(node) === :macrocall || return nothing
             push!(macrocalls, JS.sourcetext(node[1]))
             return nothing
@@ -618,7 +624,7 @@ end
         st0 = jlparse(code; rule=:statement)
         transformed = JETLSCore.remove_macrocalls(@__MODULE__, world, st0)
         ranges = UnitRange{Int}[]
-        JETLSCore.traverse(transformed) do node::SyntaxTree
+        JETLSCore.traverse(transformed) do node
             if JS.head(node) === :identifier && JETLSCore.get_name_val(node) == "key"
                 push!(ranges, JS.byte_range(node))
             end
@@ -641,12 +647,65 @@ end
     let st0 = jlparse("`echo \$(@time(xxx)) \$(@inline(yyy))`"; rule=:statement)
         transformed = JETLSCore.remove_macrocalls(@__MODULE__, world, st0)
         macrocalls = String[]
-        JETLSCore.traverse(transformed) do node::SyntaxTree
+        JETLSCore.traverse(transformed) do node
             JS.head(node) === :macrocall || return nothing
             push!(macrocalls, JS.sourcetext(node[1]))
             return nothing
         end
         @test macrocalls == ["@inline"]
+    end
+end
+
+@testset "`remove_macrocalls` lifts argument-list-only forms of macro calls" begin
+    world = Base.get_world_counter()
+    for (code, names) in (
+            ("@m(x; a, b=c, d...)", ["a", "c", "d", "x"]),
+            ("@m(x; a; b=c)", ["a", "c", "x"]),
+            ("@m(; k=\$v, \$(xs...))", ["v", "xs"]),
+            ("@m(x; @m(y; k=z))", ["x", "y", "z"]),
+            ("@m(x, ys...)", ["x", "ys"]),
+            ("@m(\$(xs...))", ["xs"]))
+        st0 = jlparse(code; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(varargs_macro_context, world, st0)
+        nonleaf_heads = Set{Symbol}()
+        identifiers = String[]
+        JETLSCore.traverse(transformed) do node
+            if JS.head(node) === :identifier
+                push!(identifiers, JETLSCore.name_val(node))
+            elseif !JS.is_leaf(node)
+                push!(nonleaf_heads, JS.head(node))
+            end
+            return nothing
+        end
+        @test nonleaf_heads == Set((:block,))
+        @test sort!(identifiers) == names
+    end
+
+    let st0 = jlparse("@m f(x; k=v)"; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(varargs_macro_context, world, st0)
+        @test JS.head(transformed) === :block
+        call = transformed[end]
+        @test JS.head(call) === :call
+        @test JS.head(call[2]) === :parameters
+    end
+
+    let st0 = jlparse("@m(a) do x\n    x + \$a\nend"; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(varargs_macro_context, world, st0)
+        @test JS.head(transformed) === :block
+        @test JS.numchildren(transformed) == 2
+        @test JS.head(transformed[1]) === :block
+        @test JS.head(transformed[2]) === :->
+        heads = Set{Symbol}()
+        JETLSCore.traverse(transformed) do node
+            push!(heads, JS.head(node))
+            return nothing
+        end
+        @test :$ ∉ heads
+    end
+
+    let st0 = jlparse("f(a) do x\n    @m(x; k=a)\nend"; rule=:statement)
+        transformed = JETLSCore.remove_macrocalls(varargs_macro_context, world, st0)
+        @test JS.head(transformed) === :do
     end
 end
 
@@ -1215,8 +1274,8 @@ end
 
 @testset "check_syntax_tree0 detects mutation" begin
     for mutate! in (
-            st::SyntaxTree -> JL.setmeta!(st[1], :mutated, true),
-            st::SyntaxTree -> push!(JS.children(st[1]), st[1][1]))
+            st -> JL.setmeta!(st[1], :mutated, true),
+            st -> push!(JS.children(st[1]), st[1][1]))
         fi = JETLSCore.FileInfo(#=version=#1, "f(x) = x + 1", "test.jl"; cache_tree0=true)
         @test JETLSCore.build_syntax_tree(fi) === fi.syntax_tree0
         @test JETLSCore.check_syntax_tree0(fi) === nothing
