@@ -474,6 +474,22 @@ function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTree)
     return get_name_val(macro_name) in ("nospecialize", "specialize")
 end
 
+function push_macrocall_argument!(new_children::SyntaxList, arg::SyntaxTree)
+    if JS.head(arg) === :parameters
+        for param in JS.children(arg)
+            if JS.head(param) === :kw && JS.numchildren(param) == 2
+                param = param[2]
+            end
+            push_macrocall_argument!(new_children, param)
+        end
+    elseif JS.head(arg) === :... && JS.numchildren(arg) == 1
+        push_macrocall_argument!(new_children, arg[1])
+    else
+        push!(new_children, arg)
+    end
+    return new_children
+end
+
 function _remove_macrocalls(
         context_module::Union{Nothing,Module}, world::UInt, st0::SyntaxTree;
         strip_static::Bool = false
@@ -515,7 +531,7 @@ function _remove_macrocalls(
             # `$` would be out of context and fail lowering, so unwrap
             # interpolations on the lifted child.
             stripped, _ = _remove_macrocalls(context_module, world, st0[i]; strip_static)
-            push!(new_children, _unwrap_interpolations(stripped)[1])
+            push_macrocall_argument!(new_children, _unwrap_interpolations(stripped)[1])
         end
         return JL.@ast(_, st0, [:block new_children...]), true
     elseif JS.is_leaf(st0)
@@ -538,6 +554,12 @@ function _remove_macrocalls(
         nc, cc = _remove_macrocalls(child_context, world, c; strip_static)
         changed |= cc
         push!(new_children, nc)
+    end
+    if (JS.head(st0) === :do && JS.numchildren(st0) == 2 &&
+        JS.head(st0[1]) === :macrocall && JS.head(new_children[1]) !== :macrocall)
+        # The `do` block of a removed macrocall is left without a call to pass it to
+        lambda = unwrap_interpolations(new_children[2])
+        return JL.@ast(_, st0, [:block new_children[1] lambda]), true
     end
     return (changed ? BS.@mknode(st0; children=new_children) : st0, changed)
 end
@@ -613,6 +635,13 @@ A cmd literal or a `lazy"..."` string with `\$` interpolations is replaced with 
 of them in the same way. The parser leaves them unparsed in the string of the literal, so
 they are parsed here with their source locations, which also lets the macro calls in them
 be converted.
+
+The arguments of a removed macrocall may use forms that are valid only in an argument
+list, not in a `block`, so they are replaced with the expressions within them: the
+parameters after `;`, e.g. `@m(x; a, b=c, d...)`, with `a`, `c`, and `d`, where the name
+of a keyword argument is dropped since it doesn't refer to a binding, and a splatted
+argument, e.g. `@m(xs...)`, with `xs`. The `do` block of `@m(x) do ... end` is kept as an
+anonymous function next to the arguments, since the macro would receive it as an argument.
 
 With `strip_static=true`, `@static` conditionals are also rewritten to plain runtime
 conditionals (keeping every branch) rather than expanded to the single branch selected

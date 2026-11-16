@@ -3064,6 +3064,19 @@ end
         @test isempty(diagnostics)
     end
 
+    # Imports used in definitions containing macro calls with parameters after `;`,
+    # splatted arguments, or a `do` block
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: cos, sin, tan
+        f(x) = @m(x; k=cos(x))
+        g(xs) = @m(sin(xs)...)
+        h(x) = @m() do y
+            tan(x + y)
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     # Imports used inside macro body quoted expressions should not be reported as unused
     let diagnostics = get_unused_import_diagnostics("""
         using Base.Iterators: flatten

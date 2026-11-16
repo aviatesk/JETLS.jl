@@ -151,6 +151,15 @@ end
 @inline Base.get(b::AbstractBindings, partition::Core.BindingPartition, @nospecialize(default)) =
     @something(@lock(b.lock, find_binding_state(b.bindings, partition)), Some(default))
 
+"""
+The statements of a top-level frame that assign to a global binding abstractly, i.e. without
+being concretized, together with the partition that the state of the binding is recorded for.
+"""
+struct AbstractAssignmentSites
+    partition::Core.BindingPartition
+    pcs::BitSet
+end
+
 # `export` and `Base.deprecate` replace a partition with one that differs only in its flags,
 # for which the state recorded for the replaced partition still holds
 function find_binding_state(
@@ -201,8 +210,8 @@ JETInterface.AnalyzerState(analyzer::NewAnalyzer) = analyzer.state
 mutable struct AnalyzerState
     ## AbstractInterpreter ##
 
-    const world::UInt
-    const inf_cache::LocalInferenceCache
+    world::UInt
+    inf_cache::LocalInferenceCache
     const inf_params::InferenceParams
     const opt_params::OptimizationParams
 
@@ -226,8 +235,15 @@ mutable struct AnalyzerState
     const current_toplevel_assignment::Union{Nothing,ToplevelAssignment}
     const binding_states::AbstractBindings # TODO Make this globally maintained?
 
+    # the abstract global assignments of the top-level frame under analysis
+    const assignment_sites::IdDict{Core.Binding,AbstractAssignmentSites}
+
     # some `AbstractAnalyzer` may want to use this
     entry::Union{Nothing,MethodInstance}
+
+    # the method table for `world`, once `advance_inference_world!` has moved `world` on
+    # from the one the analyzer was created with (see `current_method_table`)
+    advanced_method_table::Union{Nothing,CachedMethodTable{OverlayMethodTable}}
 end
 
 # define shortcut getter/setter methods for `AbstractAnalyzer`s
@@ -254,7 +270,9 @@ function AnalyzerState(world::UInt = get_world_counter();
                          #=concretized::BitVector=# non_toplevel_concretized,
                          #=current_toplevel_assignment=# nothing,
                          #=binding_states::AbstractBindings=# AbstractBindings(),
-                         #=entry::Union{Nothing,MethodInstance}=# nothing)
+                         #=assignment_sites=# IdDict{Core.Binding,AbstractAssignmentSites}(),
+                         #=entry::Union{Nothing,MethodInstance}=# nothing,
+                         #=advanced_method_table=# nothing)
 end
 
 # The constructor that inherits from existing `state::AnalyzerState`
@@ -265,6 +283,7 @@ function AnalyzerState(state::AnalyzerState, refresh_local_cache::Bool=true;
                        concretized::BitVector = state.concretized,
                        current_toplevel_assignment::Union{Nothing,ToplevelAssignment} = state.current_toplevel_assignment,
                        binding_states::AbstractBindings = state.binding_states,
+                       assignment_sites::IdDict{Core.Binding,AbstractAssignmentSites} = state.assignment_sites,
                        entry::Union{Nothing,MethodInstance} = state.entry)
     if refresh_local_cache
         inf_cache = new_inference_cache()
@@ -282,7 +301,9 @@ function AnalyzerState(state::AnalyzerState, refresh_local_cache::Bool=true;
                          concretized,
                          current_toplevel_assignment,
                          binding_states,
-                         entry)
+                         assignment_sites,
+                         entry,
+                         #=advanced_method_table=# nothing)
 end
 
 # dummies for non-toplevel analysis
@@ -549,6 +570,13 @@ Concrete subtypes of `ToplevelAbstractAnalyzer` must implement all interfaces
 required by [`AbstractAnalyzer`](@ref). Methods specialized for this interface
 then provide the top-level-specific abstract interpretation behavior.
 
+Top-level analysis moves the inference world of the analyzer on at each
+`:latestworld` of a top-level frame. A subtype that overloads
+`Compiler.method_table` therefore has to return a method table for the world
+that `Compiler.get_inference_world(analyzer)` returns at that time, e.g. by
+passing the `CachedMethodTable{OverlayMethodTable}` it was created with through
+`JET.current_method_table(analyzer, method_table)`.
+
 ## See also
 
 - [`AbstractAnalyzer`](@ref): the base analyzer interface
@@ -567,6 +595,8 @@ function ToplevelAbstractAnalyzer(
     world = get_world_counter()
     analyzer = ToplevelAbstractAnalyzer(interp)
     state = AnalyzerState(analyzer)
-    newstate = AnalyzerState(state; world, concretized, current_toplevel_assignment)
+    assignment_sites = IdDict{Core.Binding,AbstractAssignmentSites}()
+    newstate = AnalyzerState(state;
+        world, concretized, current_toplevel_assignment, assignment_sites)
     return AbstractAnalyzer(analyzer, newstate)
 end

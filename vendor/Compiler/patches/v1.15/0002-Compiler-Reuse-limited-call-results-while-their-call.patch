@@ -227,10 +227,10 @@ index b733688691b88d1d5482dab7861af45263919ad9..3760dde2dd915b9ef8ab092881a93644
  function InferenceResult(mi::MethodInstance, 𝕃::AbstractLattice=fallback_lattice)
      argtypes = matching_cache_argtypes(𝕃, mi)
 diff --git a/Compiler/test/inference.jl b/Compiler/test/inference.jl
-index 29c9a0f8992c292fdaf8e5b4181ac34d2abeb946..24e78aba50b83d3179826d2aa3d3e9a2b327a517 100644
+index a08cc8b2b1b6d636dba8591c0f0f16b65bb43f8e..cf1de816f0e44ea66783d57ec60c801732d1953d 100644
 --- a/Compiler/test/inference.jl
 +++ b/Compiler/test/inference.jl
-@@ -6764,6 +6764,70 @@ Base.@constprop :aggressive type_level_recurse2(x...) = type_level_recurse1(x...
+@@ -6782,6 +6782,70 @@ Base.@constprop :aggressive type_level_recurse2(x...) = type_level_recurse1(x...
  type_level_recurse_entry() = Val{type_level_recurse1(1)}()
  @test Base.infer_return_type(type_level_recurse_entry, (); interp=RecurseInterpreter()) == Val{1}
  

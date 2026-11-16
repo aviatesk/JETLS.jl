@@ -6,7 +6,7 @@ using BaseSyntax
         @test BaseSyntax.Syntax === Base.BaseSyntax.Syntax === Base.Syntax
     end
     @static if isdefined(BaseSyntax, :Syntax)
-        ctx = BaseSyntax.SyntaxContext(Main, BaseSyntax.JL_OLD_EDITION)
+        ctx = BaseSyntax.SyntaxContext(Main, BaseSyntax.FLISP_EDITION)
         st = BaseSyntax.@mknode(; head=:identifier, value="x",
                                 source=LineNumberNode(1, :none), context=ctx)
         @test BaseSyntax.head(st) === :identifier

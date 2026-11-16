@@ -12,14 +12,12 @@ Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 BaseSyntax = "bfd32023-066c-5f76-8dc3-939c60a69aeb"
 
 [sources.BaseSyntax]
-subdir = "vendor/BaseSyntax"
-rev = "c0668c51109bce86f46838b405b91f9e0651e7ad"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../BaseSyntax"
 
 [targets]
 test = ["Test", "Serialization", "Logging"]
 
 [compat]
-julia = "1.0"
+julia = "1.10"
 Serialization = "1.0"
 BaseSyntax = "0.1"

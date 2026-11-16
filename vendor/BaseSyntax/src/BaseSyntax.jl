@@ -1,5 +1,14 @@
 module BaseSyntax
 
+# `syntax.jl` and JuliaLowering refer to these editions through this module. `Core` defines
+# them on Julia 1.14 and later.
+if isdefined(Core, :FLISP_EDITION)
+    using Core: FLISP_EDITION, EXPERIMENTAL_EDITION
+elseif VERSION >= VersionNumber(1, 12)
+    const FLISP_EDITION = (1, 14)
+    const EXPERIMENTAL_EDITION = (1, 25)
+end
+
 # `Base` includes this file to define `Base.BaseSyntax`. Loaded as a package, this module
 # re-exports `Base.BaseSyntax` where it exists, so that every copy of JuliaSyntax and
 # JuliaLowering shares `Base`'s definitions, and defines them itself otherwise.
