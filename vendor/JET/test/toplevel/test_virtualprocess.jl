@@ -1311,6 +1311,7 @@ end
         end
     end
 
+    # the loop is left only after the assignment
     let res = @analyze_toplevel begin
             while true
                 localvar = rand(Bool)
@@ -1320,14 +1321,7 @@ end
             println(globalvar)
         end
         @test isnothing(res.res.toplevel_error_report)
-        isexpected = length(res.res.inference_error_reports) == 1
-        @test isexpected
-        if isexpected
-            report = only(res.res.inference_error_reports)
-            @test report isa UndefVarErrorReport
-            @test report.var.name === :globalvar
-            @test report.maybeundef
-        end
+        @test isempty(res.res.inference_error_reports)
     end
 end
 
@@ -1998,7 +1992,7 @@ end
             end # module LatestWorldGetproperty
         """)
         @test isnothing(res.res.toplevel_error_report)
-        @test isempty(res.res.inference_error_reports)
+        test_sum_over_string(res)
     end
 
     # this should work even if the accessed variable is not constant
@@ -2186,6 +2180,83 @@ end
         @test er.err isa ErrorException
         @test startswith(er.err.msg, "cannot document the following expression")
         @test er.file == "undocumentable.jl" && er.line == 1
+    end
+
+    @testset "explicit `@doc`" begin
+        # a definition documented by calling `@doc` is analyzed like one with a docstring
+        for docmacro in ("@doc", "Core.@doc", "Base.@doc", "Base.Docs.@doc")
+            res = report_text("""
+                $docmacro "doc for x" x = 1
+                $docmacro raw"doc for getx" getx() = x
+                getx()
+                """)
+            @test isnothing(res.res.toplevel_error_report)
+            reports = filter(res.res.inference_error_reports) do r
+                !is_global_undef_var(r, Base, :active_repl)
+            end
+            @test isempty(reports)
+        end
+        let res = report_text("""
+                import Core: @doc as @document
+                @document "doc for x" x = 1
+                @document "doc for getx" getx() = x
+                getx()
+                """)
+            @test isnothing(res.res.toplevel_error_report)
+            reports = filter(res.res.inference_error_reports) do r
+                !is_global_undef_var(r, Base, :active_repl)
+            end
+            @test isempty(reports)
+        end
+
+        let (vmod, res) = @analyze_toplevel2 concretization_patterns = [:(const foo = Dict())] begin
+                @doc "doc for foo" const foo = Dict()
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isconcrete(res, vmod, :foo)
+            @test (@invokelatest vmod.foo) isa Dict
+        end
+
+        let res = report_text("""
+                @doc "doc" if true
+                    f() = 1
+                end
+                """, "undocumentable.jl")
+            er = res.res.toplevel_error_report
+            @test er isa ActualErrorWrapped
+            @test er.err isa ErrorException
+            @test startswith(er.err.msg, "cannot document the following expression")
+            @test er.file == "undocumentable.jl" && er.line == 1
+        end
+
+        # a macro that only shares the name is expanded as it is
+        let res = report_text("""
+                macro doc(str, ex)
+                    return esc(ex)
+                end
+                @doc "not a docstring" f() = 1
+                f()
+                """)
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+    end
+
+    @testset "documented block from a macro" begin
+        # Since Julia 1.13, `@doc` keeps the value of such a block in a hygienic global that
+        # it assigns and reads in separate `if true ... end` wrappers
+        res = report_text("""
+            "doc for Documented"
+            Base.@kwdef struct Documented
+                x::Int = 1
+            end
+            Documented()
+            """)
+        @test isnothing(res.res.toplevel_error_report)
+        reports = filter(res.res.inference_error_reports) do r
+            !is_global_undef_var(r, Base, :active_repl)
+        end
+        @test isempty(reports)
     end
 
     @testset "documented module" begin
@@ -2580,10 +2651,10 @@ end
     let res = @analyze_toplevel analyze_from_definitions=true ignore_missing_comparison=true begin
             f(a::Vector{T}, b::Vector{T}) where T<:Integer = a == b ? true : false
         end
-        # Since JuliaLang/julia#62263, `typeof(::Memory{T})` is inferred as a
-        # `Type{Memory{T}}` that is not a `DataType`, so `supertype(::UnionAll)` is also
-        # analyzed, until JuliaLang/julia#64108 fixed its inference
-        @test isempty(res.res.inference_error_reports) broken=v"1.14.0-DEV.2603"≤VERSION<v"1.15.0-DEV.181"
+        # This also tests JuliaLang/julia#64108: `typeof(::Memory{T})` is inferred as a
+        # `Type{Memory{T}}` that is not a `DataType` since JuliaLang/julia#62263, for which
+        # `supertype(::UnionAll)` would otherwise be analyzed and reported
+        @test isempty(res.res.inference_error_reports)
     end
     # make sure we get the error report from the interactive entry
     let res = report_call((Any, Nothing)) do x, y

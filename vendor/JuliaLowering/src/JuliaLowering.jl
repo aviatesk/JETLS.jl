@@ -3,11 +3,6 @@ baremodule JuliaLowering
 
 using Base
 
-# bug with baremodules
-if isdefinedglobal(Base, :set_syntax_version)
-    Base.set_syntax_version(JuliaLowering, v"1.14")
-end
-
 # We define a separate _include() for use in this module to avoid mixing method
 # tables with the public `JuliaLowering.include()` API
 const _include = Base.IncludeInto(JuliaLowering)
@@ -22,7 +17,7 @@ end
 
 using .BaseSyntax: ScopeLayer, SyntaxContext, SourceCode, SourceRef, Syntax, MacroContext,
     SourceAttrType, head, flattened_provenance, sourceref, unexpanded_sourceref,
-    mapchildren, provenance, JL_NEW_EDITION, JL_OLD_EDITION, DEBUG_LOWERING,
+    mapchildren, provenance, DEBUG_LOWERING,
     is_base_layer, base_layer, escape_layer, remove_scope, fill_context,
     trim_provenance,
     syntax_module, edition, adopt_scope, assert_syntax, @mknode, macro_prov,
@@ -35,6 +30,9 @@ using .JuliaSyntax: children, first_byte, highlight, is_leaf,
 const DEBUG = DEBUG_LOWERING
 # const DEBUG = isdefinedglobal(Base, :DEBUG_LOWERING) ?
 #     Base.DEBUG_LOWERING : true
+
+const JL_NEW_EDITION = BaseSyntax.EXPERIMENTAL_EDITION # TODO: set this to (1, 15)
+const JL_OLD_EDITION = BaseSyntax.FLISP_EDITION
 
 # Falls back to `Union{}` so that `loc isa MacroSource` is always false on Julia < 1.14
 # where `Core.MacroSource` is not defined.

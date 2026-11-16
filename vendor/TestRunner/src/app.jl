@@ -411,12 +411,16 @@ function testrunner_diagnostic(result::Union{Test.Fail,Test.Error})
             end
         end
     end
-    message = sprint(show, result)
+    message = remove_ansi_colors(sprint(show, result))
     i = findfirst('\n', message)
     details = i === nothing ? "" : rstrip(message[nextind(message, i):end])
-    return TestRunnerDiagnostic(
-        filename, line, message, testrunner_summary(result), details, relatedInformation)
+    summary = remove_ansi_colors(testrunner_summary(result))
+    return TestRunnerDiagnostic(filename, line, message, summary, details, relatedInformation)
 end
+
+# `Test` renders the stack trace of a `Test.Error` when the error is recorded, with the
+# colors of `stdout`, which e.g. `--color=yes` enables even when `stdout` is not a terminal
+remove_ansi_colors(s::String) = replace(s, r"\e\[[0-9;]*m" => "")
 
 # The diagnostics are reported at the location of the failure, which the first line of the
 # `show` output starts with, so the summary describes the failure instead

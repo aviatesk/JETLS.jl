@@ -137,6 +137,67 @@ end
             @test !occursin("prior to its definition world", read(path, String))
         end
     end
+
+    # a global assigned within a top-level block is defined for the reads that follow the
+    # assignment, including those made by a callee
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        result = JET.analyze_and_report_text!(interp, """
+            ready() = y
+            if rand(Bool)
+                x = 1
+                sin(x)
+                y = 1
+                sin(ready())
+            end
+            """)
+        @test isnothing(result.res.toplevel_error_report)
+        @test isempty(get_reports(result))
+    end
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        result = JET.analyze_and_report_text!(interp, """
+            if rand(Bool)
+                sin(x)
+                x = 1
+            end
+            """)
+        @test isnothing(result.res.toplevel_error_report)
+        r = only(get_reports(result))
+        @test r isa UndefVarErrorReport && r.var isa GlobalRef && r.var.name === :x
+    end
+end
+
+@testset "top-level code after a world age update" begin
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        result = JET.analyze_and_report_text!(interp, """
+            for i in 1:3
+                global xs = [sin(x) for x in 1:i]
+                sum("julia")
+            end
+            """)
+        @test isnothing(result.res.toplevel_error_report)
+        @test any(r -> r isa NoMethodMatchReport, get_reports(result))
+    end
+
+    # a redeclared constant is seen by the rest of the block, including through a callee
+    # that was inferred before the redeclaration
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        result = JET.analyze_and_report_text!(interp, """
+            const x = "julia"
+            readx() = x
+            readx()
+            let
+                global const x = 1
+                sin(x)
+                sin(readx())
+            end
+            """)
+        @test isnothing(result.res.toplevel_error_report)
+        @test isempty(get_reports(result))
+    end
 end
 
 @testset "concretized call reports" begin
@@ -187,6 +248,8 @@ end
 Base.getproperty(o::HelperGetproperty, s::Symbol) = helper_getproperty(o, s)
 helper_getproperty(o::HelperGetproperty, s::Symbol) = getfield(o, s)
 helper_getproperty_error(o::HelperGetproperty) = o.missing
+
+guarded_union_field(::Type{T}) where T = T isa Union ? T.a : T
 
 @testset "FieldError analysis" begin
     let result = analyze_call((Some{Int},)) do some
@@ -269,6 +332,18 @@ helper_getproperty_error(o::HelperGetproperty) = o.missing
             T.name
         end
         @test isempty(get_reports(result))
+    end
+    # a field access guarded by the kind of an unknown type object
+    let result = analyze_call(guarded_union_field, (Type,))
+        @test isempty(get_reports(result))
+    end
+    let result = analyze_call() do
+            Type{Int}.a
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa FieldErrorReport && r.field === :a
     end
 
     # the report must not depend on inference cache state:

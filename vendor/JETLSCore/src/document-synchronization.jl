@@ -80,11 +80,12 @@ function text_document_sync_registrations(server::Server)
     return registrations
 end
 
-# JuliaLowering uses new macro semantics for syntax editions >= `BS.JL_NEW_EDITION`.
-# Parsing with the default `VERSION` would opt into them on Julia 1.15+, while
-# the runtime currently uses flisp lowering by default. Cap the parse version
-# at `BS.JL_OLD_EDITION` to keep analyses in JuliaLowering's flisp-compat mode.
-const PARSE_VERSION = min(VERSION, VersionNumber(BS.JL_OLD_EDITION...))
+# JuliaLowering uses new macro semantics for syntax editions >= `JL.JL_NEW_EDITION`,
+# which upstream plans to set to the 1.15 edition. Parsing with the default `VERSION`
+# would then opt into them on Julia 1.15+, while the runtime currently uses flisp
+# lowering by default. Cap the parse version at `JL.JL_OLD_EDITION` to keep analyses
+# in JuliaLowering's flisp-compat mode.
+const PARSE_VERSION = min(VERSION, VersionNumber(JL.JL_OLD_EDITION...))
 
 function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
     stream = JS.ParseStream(s; version=PARSE_VERSION)

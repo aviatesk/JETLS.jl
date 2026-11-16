@@ -209,7 +209,7 @@ end
 # LSAnalyzer does not need any sources, so discard them always
 CC.maybe_compress_codeinfo(::LSAnalyzer, ::MethodInstance, ::CodeInfo) = nothing
 CC.may_optimize(::LSAnalyzer) = false
-CC.method_table(analyzer::LSAnalyzer) = analyzer.method_table
+CC.method_table(analyzer::LSAnalyzer) = JET.current_method_table(analyzer, analyzer.method_table)
 # The base lattices include `MustAliasesLattice` since JuliaLang/julia#47574 (v1.14), where
 # wrapping them again would only slow down inference
 @static if !(CC.BaseInferenceLattice.instance isa CC.MustAliasesLattice)
@@ -1078,6 +1078,7 @@ function CC.finish!(analyzer::LSAnalyzer, caller::CC.InferenceState, validation_
             return !(report isa UndefKeywordErrorReport)
         end
     end
+    discard_assigned_global_reports!(analyzer, caller)
     return @invoke CC.finish!(analyzer::ToplevelAbstractAnalyzer, caller::CC.InferenceState,
         validation_world::UInt, time_before::UInt64)
 end
@@ -1209,6 +1210,25 @@ function report_undef_global_var!(
     return true
 end
 
+# TODO Better to factor out and share it with `JET.JETAnalyzer`
+# Whether the top-level `frame` certainly assigns a global binding before it reads it is not
+# known yet when `report_undef_global_var!` sees the read. The first frame of a report of
+# `frame` points to the statement of `frame` that reads the binding or that calls the code
+# reading it.
+function discard_assigned_global_reports!(analyzer::LSAnalyzer, frame::CC.InferenceState)
+    JET.istoplevelframe(frame) || return nothing
+    isempty(JET.get_assignment_sites(analyzer)) && return nothing
+    filter!(JET.get_reports(analyzer, frame.result)) do @nospecialize(report::InferenceErrorReport)
+        report isa UndefVarErrorReport || return true
+        var = report.var
+        var isa GlobalRef || return true
+        vf = first(report.vst)
+        vf.linfo === frame.linfo || return true
+        return !JET.is_assigned_at(analyzer, frame, convert(Core.Binding, var), vf.pc)
+    end
+    return nothing
+end
+
 @jetreport struct FieldErrorReport <: JETLSErrorReport
     @nospecialize type
     field::Symbol
@@ -1331,6 +1351,7 @@ function report_fieldaccess!(
     end
 
     isa(name, Const) || return false
+    f === getfield && is_type_kind_getproperty_fallback(sv, obj) && return false
     s = Base.unwrap_unionall(s00)
     if CC.isType(s)
         if f === fieldtype
@@ -1376,6 +1397,22 @@ function report_fieldaccess!(
         add_new_report!(analyzer, sv.result, BoundsErrorReport(sv, objtyp, namev, offset))
     else error("invalid field analysis") end
     return true
+end
+
+@static if isdefinedglobal(Core, :TypeEgal)
+# `Type{T}` types are kinds of their own since Julia 1.14, on which Base keeps property
+# access working with `getproperty` methods that fall back to `getfield`. These methods also
+# match a receiver that is only known to be some type object, as in `T.a` guarded by
+# `T isa Union`, for which the fallback is unreachable, which inference cannot prove.
+function is_type_kind_getproperty_fallback(sv::CC.InferenceState, @nospecialize(obj))
+    def = sv.linfo.def
+    def isa Method && def.name === :getproperty && def.module === Base || return false
+    obj isa Const && return false
+    typ = CC.widenconst(obj)
+    return typ === Core.TypeEq || typ === Core.TypeEgal
+end
+else
+is_type_kind_getproperty_fallback(::CC.InferenceState, @nospecialize(_)) = false
 end
 
 # TODO Replace this hack with a general report provenance attribution system

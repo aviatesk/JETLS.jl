@@ -37,9 +37,10 @@ function with_failing_test_file(tester)
 end
 
 function run_testrunner_process(args; stdin_input::Union{Nothing,AbstractString}=nothing,
-                                dir::AbstractString=pwd())
+                                dir::AbstractString=pwd(), julia_args::Cmd=``)
     project = pkgdir(TestRunner)
-    cmd = Cmd(`$(Base.julia_cmd()) --startup-file=no --project=$project -e "using TestRunner; exit(TestRunner.main(ARGS))" -- $args`; dir)
+    julia = `$(Base.julia_cmd()) --startup-file=no --project=$project $julia_args`
+    cmd = Cmd(`$julia -e "using TestRunner; exit(TestRunner.main(ARGS))" -- $args`; dir)
 
     mktemp() do out_path, _
         mktemp() do err_path, _
@@ -290,6 +291,32 @@ end
         @test startswith(error.details, "  Test threw exception\n  Expression: f() == 1\n")
         @test occursin("Stacktrace:", error.details)
         @test throws_nothing.summary == "Test failed: no exception thrown"
+    end
+end
+
+@testset "no colors in diagnostics" begin
+    content = """
+    using Test
+    f() = error("boom")
+    @testset "error" begin
+        @test f() == 1
+    end
+    """
+    with_test_file(content) do testfile
+        mktempdir() do dir
+            json_file = joinpath(dir, "result.json")
+            # `--color=yes` colors the output also when it is not shown in a terminal
+            result = run_testrunner_process(["--json-file=$json_file", testfile, "error"];
+                julia_args = `--color=yes`)
+            @test result.exitcode == 1
+            @test occursin('\e', result.stdout)
+            json_result = JSON3.read(read(json_file, String), TestRunnerResult)
+            diagnostic = only(json_result.diagnostics)
+            @test occursin("Stacktrace:", diagnostic.details)
+            @test !occursin('\e', diagnostic.message)
+            @test !occursin('\e', diagnostic.details)
+            @test !occursin('\e', diagnostic.summary)
+        end
     end
 end
 

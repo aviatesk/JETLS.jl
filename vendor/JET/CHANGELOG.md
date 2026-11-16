@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- links start -->
 [Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.13.1...HEAD
+[0.13.2]: https://github.com/aviatesk/JET.jl/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/aviatesk/JET.jl/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/aviatesk/JET.jl/compare/v0.12.3...v0.13.0
 [0.12.3]: https://github.com/aviatesk/JET.jl/compare/v0.12.2...v0.12.3
@@ -66,12 +67,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2]
+
+### Changed
+
+- Top-level analysis now keeps analyzing the code that follows a world age
+  update within a top-level block, as in a loop body after a comprehension or
+  after `Core.@latestworld`. JET used to give up on such code and reported
+  nothing for it:
+  ```julia
+  for i in 1:3
+      global xs = [sin(x) for x in 1:i]
+      sum("julia") # now reported
+  end
+  ```
+  The code that follows a `const` declaration within the same block is also
+  analyzed with the type of the constant.
+
 ### Fixed
 
 - Fixed runtime dispatch reports from `report_opt` on Julia 1.14 and later,
   which printed a call to a global function such as `sin(x::Any)` as
   `BindingPartition(for Main.sin: ...)(x::Any)` and recorded
   `Core.BindingPartition` as its callee type.
+
+- Fixed false positive reports that a top-level constant is not defined. They
+  were reported for the names after the first one in a destructuring
+  declaration, and for a `const` declared after another `const` within a block
+  such as `if` (aviatesk/JETLS.jl#1003):
+  ```julia
+  const A, B = 1, 2
+  getB() = B # was reported: `B` is not defined
+  ```
+  Errors in the code that follows such a declaration within the same block
+  were not reported either.
+
+- Fixed false positive `FieldError` reports on Julia 1.14 for a field access
+  guarded by the kind of a type object, as in `T isa Union ? T.a : T`. They
+  were reported, for example, for a comprehension over a non-constant global
+  variable.
+
+- Fixed false positive reports that a top-level constant may be undefined when
+  a block conditionally redeclares a constant that is already defined:
+  ```julia
+  const x = 1
+  if rand(Bool)
+      const x = 2
+  end
+  x # was reported: `x` may be undefined
+  ```
+
+- Fixed definitions documented by an explicit `@doc` call, as in
+  `@doc "docstring" f() = 1`, not being analyzed like those documented by a
+  docstring: `concretization_patterns` did not match them, and on Julia 1.13
+  and later they caused false `UndefVarErrorReport`s, e.g.
+  `` `#1#val` may be undefined ``.
+
+- Fixed false positive reports that a global variable or constant may be
+  undefined when it is assigned within a block such as `if` at the top level.
+  A read that follows the assignment within the block is no longer reported,
+  and neither is a later read if the block assigns the binding however it
+  runs, e.g. under a condition that is known to be constant or in every
+  branch:
+  ```julia
+  if rand(Bool)
+      x = 1
+      println(x) # was reported: `x` may be undefined
+  end
+
+  if Sys.iswindows()
+      const SEP = '\\'
+  else
+      const SEP = '/'
+  end
+  println(SEP) # was reported: `SEP` may be undefined
+  ```
+  On Julia 1.13 and later, this also fixes the reports such as
+  `` `#1#val` may be undefined `` for a docstring attached to a macro call
+  that expands to a block, e.g. `Base.@kwdef struct ... end`.
 
 ## [0.13.1]
 

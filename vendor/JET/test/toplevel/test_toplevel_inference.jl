@@ -338,6 +338,7 @@ end
             test_sum_over_string(res)
         end
     end
+    # a constant defined before a conditional redeclaration stays defined
     let res = @analyze_toplevel begin
             const s = rand(Int, 10)
             if rand(Bool)
@@ -345,15 +346,380 @@ end
             end
             sum(s)
         end
-        isexpected = length(res.res.inference_error_reports) == 3
-        @test isexpected
-        if isexpected
-            @test any(res.res.inference_error_reports) do report
-                isa(report, UndefVarErrorReport) &&
-                report.var.name === :s &&
-                occursin("may be undefined", get_msg(report))
+        @test !any(r -> r isa UndefVarErrorReport, res.res.inference_error_reports)
+        test_sum_over_string(res)
+    end
+    let res = @analyze_toplevel begin
+            const s = "julia"
+            if rand(Bool)
+                const s = rand(Int, 10)
             end
-            test_sum_over_string(res)
+            sum(s)
+        end
+        @test !any(r -> r isa UndefVarErrorReport, res.res.inference_error_reports)
+        test_sum_over_string(res)
+    end
+end
+
+@testset "flow-sensitive assignment" begin
+    is_maybe_undef(@nospecialize(r), name::Symbol) =
+        is_global_undef_var(r, name) && r.maybeundef
+
+    @testset "constant condition" begin
+        let res = @analyze_toplevel begin
+                if 1 isa Int
+                    v = 1
+                    println(v)
+                end
+                println(v)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                if true
+                    v = 1
+                end
+                println(v)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                if 1 isa Int
+                    v = 1
+                else
+                    println(v)
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                if 1 isa Float64
+                    v = 1
+                end
+                println(v)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            r = only(res.res.inference_error_reports)
+            @test is_global_undef_var(r, :v)
+            @test !r.maybeundef
+        end
+        # a hygienic global of a macro
+        let res = @analyze_toplevel begin
+                macro m(ex)
+                    quote
+                        f = $(esc(ex))
+                        f isa Int ? f : nothing
+                    end
+                end
+                if 1 isa Int
+                    @m 1
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+    end
+
+    @testset "non-constant condition" begin
+        # the assignment dominates the read in the branch, but not the one after it
+        let res = report_text("""
+                if rand(Bool)
+                    v = 1
+                    println(v)
+                end
+                println(v)
+                """)
+            @test isnothing(res.res.toplevel_error_report)
+            r = only(res.res.inference_error_reports)
+            @test is_maybe_undef(r, :v)
+            @test only(r.vst).line == 5
+        end
+        let res = @analyze_toplevel begin
+                begin
+                    if rand(Bool)
+                        global v = 1
+                    end
+                    println(v)
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_maybe_undef(only(res.res.inference_error_reports), :v)
+        end
+        let res = @analyze_toplevel begin
+                if rand(Bool)
+                    println(v)
+                    v = 1
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_global_undef_var(only(res.res.inference_error_reports), :v)
+        end
+        # every branch assigns
+        let res = @analyze_toplevel begin
+                if rand(Bool)
+                    v = 1
+                else
+                    v = 2
+                end
+                println(v)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                if rand(Bool)
+                    v = 1
+                elseif rand(Bool)
+                    nothing
+                else
+                    v = 2
+                end
+                println(v)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_maybe_undef(only(res.res.inference_error_reports), :v)
+        end
+    end
+
+    @testset "exception handling" begin
+        let res = @analyze_toplevel begin
+                try
+                    global v = sqrt(rand() - 0.5)
+                catch
+                    println(v)
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_maybe_undef(only(res.res.inference_error_reports), :v)
+        end
+        let res = @analyze_toplevel begin
+                try
+                    global v = sqrt(rand() - 0.5)
+                catch
+                end
+                println(v)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_maybe_undef(only(res.res.inference_error_reports), :v)
+        end
+        let res = @analyze_toplevel begin
+                try
+                    sqrt(rand() - 0.5)
+                catch
+                    global v = 1
+                else
+                    global v = 2
+                end
+                println(v)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+    end
+
+    @testset "loop" begin
+        # the read precedes the assignment in the first iteration
+        let res = @analyze_toplevel begin
+                for i in 1:2
+                    i > 1 && println(v)
+                    global v = i
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_maybe_undef(only(res.res.inference_error_reports), :v)
+        end
+        let res = @analyze_toplevel begin
+                while rand(Bool)
+                    println(v)
+                    global v = 1
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_global_undef_var(only(res.res.inference_error_reports), :v)
+        end
+        # the loop may not run at all
+        let res = @analyze_toplevel begin
+                while rand(Bool)
+                    global v = 1
+                end
+                println(v)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_maybe_undef(only(res.res.inference_error_reports), :v)
+        end
+        # the loop is left only after the assignment
+        let res = @analyze_toplevel begin
+                while true
+                    global v = 1
+                    rand(Bool) && break
+                end
+                println(v)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+    end
+
+    @testset "read in a callee" begin
+        let res = @analyze_toplevel begin
+                getv() = v
+                if rand(Bool)
+                    global v = 1
+                    getv()
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                getv() = v
+                if rand(Bool)
+                    getv()
+                    global v = 1
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            r = only(res.res.inference_error_reports)
+            @test is_global_undef_var(r, :v)
+            @test length(r.vst) == 2
+        end
+
+        # a callee inferred while the binding might be undefined is not reused once the
+        # binding is certainly assigned
+        let res = @analyze_toplevel begin
+                getv() = v
+                if rand(Bool)
+                    global v = 1
+                    getv()
+                else
+                    global v = 2
+                end
+                getv()
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                getv() = v
+                if 1 isa Int
+                    v = 1
+                    getv()
+                end
+                getv()
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                getv() = v
+                if 1 isa Int
+                    global v::Int = 1
+                    getv()
+                end
+                getv()
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            # FIXME a typed declaration is concretized as it is, so there is nothing that
+            # invalidates `getv`
+            @test_broken isempty(res.res.inference_error_reports)
+        end
+    end
+
+    @testset "later constant declaration" begin
+        # the binding is declared as by an unconditional assignment
+        let res = @analyze_toplevel begin
+                if 1 isa Int
+                    v = 1
+                end
+                const v = 2
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test only(res.res.inference_error_reports) isa InvalidConstantDeclarationReport
+        end
+    end
+
+    @testset "constant declaration" begin
+        let res = report_text("""
+                if rand(Bool)
+                    const c = 1
+                    println(c)
+                end
+                println(c)
+                """)
+            @test isnothing(res.res.toplevel_error_report)
+            r = only(res.res.inference_error_reports)
+            @test is_maybe_undef(r, :c)
+            @test only(r.vst).line == 5
+        end
+        let res = @analyze_toplevel begin
+                if 1 isa Int
+                    const c = 1
+                end
+                println(c)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                if 1 isa Int
+                    const c = 1
+                else
+                    const c = "julia"
+                end
+                getc() = c
+                sum(getc())
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+        let res = @analyze_toplevel begin
+                if rand(Bool)
+                    const c = 1
+                else
+                    const c = 2
+                end
+                println(c)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+    end
+
+    # The call may not assign to `a` when it runs again, with another name or callee, so it
+    # does not tell that `a` is assigned after the loop
+    @testset "call that may not assign" begin
+        let res = @analyze_toplevel begin
+                let name = :a
+                    while true
+                        if rand(Bool)
+                            setglobal!(@__MODULE__, name, 0)
+                            break
+                        end
+                        name = :b
+                    end
+                end
+                println(a)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_maybe_undef(only(res.res.inference_error_reports), :a)
+        end
+        let res = @analyze_toplevel begin
+                let f = setglobal!
+                    while true
+                        if rand(Bool)
+                            f(@__MODULE__, :a, 0)
+                            break
+                        end
+                        f = tuple
+                    end
+                end
+                println(a)
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test is_maybe_undef(only(res.res.inference_error_reports), :a)
         end
     end
 end
@@ -411,6 +777,172 @@ end
         end
         @test isnothing(res.res.toplevel_error_report)
         @test isempty(res.res.inference_error_reports)
+    end
+end
+
+@testset "consecutive abstract `const` declarations (aviatesk/JETLS.jl#1003)" begin
+    let res = @analyze_toplevel begin
+            const c1, c2, c3 = 1, 2, 3
+            println(c1, c2, c3)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
+    let res = @analyze_toplevel begin
+            pair() = (1, "julia")
+            const n, s = pair()
+            sum(s)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test !any(r -> r isa UndefVarErrorReport, res.res.inference_error_reports)
+        test_sum_over_string(res)
+    end
+
+    let res = @analyze_toplevel begin
+            if rand(Bool)
+                const x = 1
+                const y = x > 0 ? 1 : 2
+            end
+            println(y)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test any(res.res.inference_error_reports) do report
+            report isa UndefVarErrorReport && report.var.name === :y && report.maybeundef
+        end
+        @test !any(res.res.inference_error_reports) do report
+            report isa UndefVarErrorReport && !report.maybeundef
+        end
+    end
+
+    # the statements after the declaration are analyzed too
+    let res = @analyze_toplevel begin
+            if rand(Bool)
+                const x = 1
+                sum("julia")
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        test_sum_over_string(res)
+    end
+
+end
+
+@testset "`:latestworld` in top-level frames" begin
+    # the rest of the frame sees a declaration
+    let res = @analyze_toplevel begin
+            if rand(Bool)
+                const s = "julia"
+                sum(s)
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        test_sum_over_string(res)
+    end
+
+    # and a redeclaration, including through what was inferred before it
+    let res = @analyze_toplevel begin
+            const x = "julia"
+            let
+                global const x = 1
+                sin(x)
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+    let res = @analyze_toplevel begin
+            const x = "julia"
+            readx() = x
+            readx()
+            let
+                global const x = 1
+                sin(readx())
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
+    # a redeclaration within a loop has the loop analyzed again
+    let res = @analyze_toplevel begin
+            let
+                global const x = 1
+                while x isa Int
+                    global const x = "julia"
+                end
+                sin(x)
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test any(r -> r isa MethodErrorReport, res.res.inference_error_reports)
+    end
+    # which converges even when unconditional redeclarations are analyzed again
+    let res = @analyze_toplevel begin
+            let i = 0
+                @label again
+                global const x = 1
+                global const x = 2
+                i += 1
+                i < 2 && @goto again
+                sin(x)
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+    let res = @analyze_toplevel begin
+            let i = 0
+                @goto loop
+                @label exit
+                global const x = 1
+                @goto done
+                @label loop
+                global const x = "julia"
+                i += 1
+                (rand(Bool) || i > 1) && @goto exit
+                @goto loop
+                @label done
+                sin(x)
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+    end
+    # and when the types of the constants grow through each other
+    let res = @analyze_toplevel begin
+            let
+                global const x = 1
+                global const y = nothing
+                global const z = ()
+                while rand(Bool)
+                    global const x = y
+                    global const y = (z,)
+                    global const z = (x, y)
+                end
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
+    # the statements after `:latestworld` are analyzed
+    let res = @analyze_toplevel begin
+            let
+                Core.@latestworld
+                sum("julia")
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        test_sum_over_string(res)
+    end
+    let res = @analyze_toplevel begin
+            for i in 1:3
+                xs = [sin(x) for x in 1:i]
+                sum("julia")
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        test_sum_over_string(res)
     end
 end
 

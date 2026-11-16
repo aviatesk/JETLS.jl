@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`2f6c9cc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/2f6c9cc...HEAD)
+- Diff: [`40a5e9c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/40a5e9c...HEAD)
 
 ### Announcement
 
@@ -52,6 +52,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Changed
+
+- [Script analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/modes/script) now keeps inferring the top-level code that follows a definition or a declaration within a block such as a loop or `let`, e.g. a loop body after a comprehension.
+  Such code used to be left uninferred, so no [`inference/*` diagnostics](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference) were reported for it:
+  ```julia
+  for i in 1:3
+      global xs = [sin(x) for x in 1:i]
+      sum("julia") # now reported as `inference/method-error`
+  end
+  ```
+  The code that follows a `const` declaration within the same block is also inferred with the type of the constant.
+
+### Fixed
+
+- Fixed false positive [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) diagnostics ("`X` is not defined") for the second and later names of a destructuring `const` declaration such as `const A, B = f()`, and for a `const` declared after another `const` within a top-level block such as `if`.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1003)
+
+- Fixed false positive [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) diagnostics ("`#N#val` may be undefined") for definitions documented with an explicit `@doc` call, such as `@doc raw"..." f() = ...`, on Julia 1.13 and later.
+
+- Fixed false positive [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) diagnostics ("`x` may be undefined") for a global variable or constant assigned within a top-level block such as `if`.
+  A read that follows the assignment within the block is no longer reported.
+  Neither is a later read if the block assigns the binding however it runs, e.g. under a condition that is known to be constant or in every branch, or if the block redeclares a constant that was already defined:
+  ```julia
+  if rand(Bool)
+      x = 1
+      println(x) # was reported: `x` may be undefined
+  end
+  ```
+  On Julia 1.13 and later, this also fixes the "`#N#val` may be undefined" diagnostics for a docstring attached to a macro call that expands to a block, e.g. `Base.@kwdef struct ... end`.
+
+- Fixed false positive [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error) diagnostics on Julia 1.14 for a field access guarded by the kind of a type object, as in `T isa Union ? T.a : T` where `T` is a static parameter.
+
+- Fixed find-references, document-highlight, rename, and the features on local bindings such as go-to-definition and hover not working within a definition that contains a macro call with arguments after `;`, splatted arguments, or a `do` block, such as `@mymacro(x; flag=true)`, `@printf(fmt, xs...)`, or `@mymacro(x) do ... end`, and [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import) being falsely reported for names used only in such a definition.
+
+## 2026-11-14
+
+- Commit: [`40a5e9c`](https://github.com/aviatesk/JETLS.jl/commit/40a5e9c)
+- Diff: [`2f6c9cc...40a5e9c`](https://github.com/aviatesk/JETLS.jl/compare/2f6c9cc...40a5e9c)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-11-14")'
+  ```
 
 ### Fixed
 

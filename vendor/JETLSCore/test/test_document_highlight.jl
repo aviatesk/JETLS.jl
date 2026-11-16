@@ -127,6 +127,31 @@ end
             end
         end
 
+        @testset "highlight with argument-list-only forms of macrocalls" begin
+            for code in (
+                    "func(st, │children│) = @mknode(st; children=│children│)\n",
+                    "func(│head│, value) = @mknode(; │head│, value)\n",
+                    "func(fmt, │xs│) = @printf(fmt, │xs│...)\n",
+                    "func(│aa│) = @m() do x\n    x + │aa│\nend\n",
+                    "func(aa) = @m(aa) do │xx│\n    │xx│ + aa\nend\n")
+                fi, positions = highlight_testcase(code, 4)
+                for pos in positions
+                    highlights = JETLSCore.document_highlights(fi, pos)
+                    @test length(highlights) == 2
+                    @test any(highlights) do highlight
+                        highlight.range.start == positions[1] &&
+                        highlight.range.var"end" == positions[2] &&
+                        highlight.kind == DocumentHighlightKind.Write
+                    end
+                    @test any(highlights) do highlight
+                        highlight.range.start == positions[3] &&
+                        highlight.range.var"end" == positions[4] &&
+                        highlight.kind == DocumentHighlightKind.Read
+                    end
+                end
+            end
+        end
+
         @testset "highlight across @static branches" begin
             # A binding used in a `@static` branch not selected for the current platform
             # is still highlighted: occurrence analysis retains every branch (as a plain

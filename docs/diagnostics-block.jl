@@ -32,11 +32,14 @@ using JETLSCore: CodeAction, Command, Diagnostic, DiagnosticSeverity, Diagnostic
 using JuliaSyntaxHighlighting: highlight
 using Markdown: Markdown
 
+const DIAGNOSTICS_BLOCK_LANGS =
+    ("@diagnostics", "@diagnostics-file", "@diagnostics-setup", "@diagnostics-run")
+
 abstract type DiagnosticsBlocks <: Documenter.Expanders.NestedExpanderPipeline end
 
 Documenter.Selectors.order(::Type{DiagnosticsBlocks}) = 12.0
 Documenter.Selectors.matcher(::Type{DiagnosticsBlocks}, node, _page, _doc) =
-    Documenter.iscode(node, r"^@diagnostics(\s|;|$)")
+    Documenter.iscodelang(node, "@diagnostics")
 function Documenter.Selectors.runner(::Type{DiagnosticsBlocks}, node, page, doc)
     code = node.element.code
     source, kwargs = @something parse_block_kwargs("@diagnostics", node, page, doc,
@@ -74,10 +77,11 @@ abstract type DiagnosticsFileBlocks <: Documenter.Expanders.NestedExpanderPipeli
 
 Documenter.Selectors.order(::Type{DiagnosticsFileBlocks}) = 12.1
 Documenter.Selectors.matcher(::Type{DiagnosticsFileBlocks}, node, _page, _doc) =
-    Documenter.iscode(node, r"^@diagnostics-(file|setup)(\s|;|$)")
+    Documenter.iscodelang(node, "@diagnostics-file") ||
+    Documenter.iscodelang(node, "@diagnostics-setup")
 function Documenter.Selectors.runner(::Type{DiagnosticsFileBlocks}, node, page, doc)
     code = node.element.code
-    lang = startswith(node.element.info, "@diagnostics-file") ? "@diagnostics-file" : "@diagnostics-setup"
+    lang = Documenter.iscodelang(node, "@diagnostics-file") ? "@diagnostics-file" : "@diagnostics-setup"
     source, kwargs = @something parse_block_kwargs(lang, node, page, doc, (:workspace, :file)) return nothing
     workspace = required_string_kwarg(kwargs, :workspace, lang, source)
     file = required_string_kwarg(kwargs, :file, lang, source)
@@ -94,7 +98,7 @@ abstract type DiagnosticsRunBlocks <: Documenter.Expanders.NestedExpanderPipelin
 
 Documenter.Selectors.order(::Type{DiagnosticsRunBlocks}) = 12.2
 Documenter.Selectors.matcher(::Type{DiagnosticsRunBlocks}, node, _page, _doc) =
-    Documenter.iscode(node, r"^@diagnostics-run(\s|;|$)")
+    Documenter.iscodelang(node, "@diagnostics-run")
 function Documenter.Selectors.runner(::Type{DiagnosticsRunBlocks}, node, page, doc)
     lang = "@diagnostics-run"
     source, kwargs = @something parse_block_kwargs(lang, node, page, doc, (:workspace, :file)) return nothing
@@ -110,6 +114,27 @@ function Documenter.Selectors.runner(::Type{DiagnosticsRunBlocks}, node, page, d
     # rendered with the ANSI colors, as Documenter renders the outputs of `@repl` blocks
     node.element = Documenter.MarkdownAST.CodeBlock("documenter-ansi",
         elide_stacktrace(relative_paths(String(take!(output)), root)))
+    return nothing
+end
+
+# Fails the build when a block is left unexpanded, e.g. when a Documenter update stops our
+# expanders from matching, which would otherwise silently render the blocks as plain code
+abstract type CheckDiagnosticsBlocks <: Documenter.Builder.DocumentPipeline end
+
+Documenter.Selectors.order(::Type{CheckDiagnosticsBlocks}) = 2.1
+function Documenter.Selectors.runner(::Type{CheckDiagnosticsBlocks}, doc::Documenter.Document)
+    # `ExpandTemplates` is skipped then
+    doc.user.doctest in (:fix, :only) && return nothing
+    sources = String[]
+    for page in values(doc.blueprint.pages)
+        for node in Documenter.AbstractTrees.PreOrderDFS(page.mdast)
+            any(lang -> Documenter.iscodelang(node, lang), DIAGNOSTICS_BLOCK_LANGS) || continue
+            push!(sources, Documenter.locrepr(doc, page,
+                Documenter.find_block_in_file(node.element.code, page.source)))
+        end
+    end
+    isempty(sources) ||
+        error("The `@diagnostics` blocks were not expanded:\n", join(sources, '\n'))
     return nothing
 end
 

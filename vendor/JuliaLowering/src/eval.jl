@@ -920,19 +920,19 @@ Like `include`, except reads code from the given string rather than from a file.
 """
 function include_string(mapexpr::Function, mod::Module, code::AbstractString,
                         filename::AbstractString)
-    version = if invokelatest(isdefined, mod, Symbol("#_internal_julia_parse"))
-        vp = invokelatest(getglobal, mod, Symbol("#_internal_julia_parse"))
-        vp isa Base.VersionedParse ? vp.edition : JuliaSyntax.LATEST_STABLE_EDITION
+    # `Meta.parseall` returns the `Syntax` of `Base`, which a package copy does not share
+    # where `Base` lacks `BaseSyntax`
+    st = if isdefinedglobal(Base, :BaseSyntax)
+        Meta.parseall(code; filename, mod, type=Syntax)
     else
-        JuliaSyntax.LATEST_STABLE_EDITION
+        parseall(SyntaxTree, code; filename, version=VersionNumber(Core.get_edition(mod)),
+                 ignore_warnings=true)
     end
-    st = parseall(SyntaxTree, code; filename, version=VersionNumber(version),
-                  ignore_warnings=true)
     @jl_assert head(st) === :toplevel st
     if mapexpr !== identity
         # TODO: Is there any way to support provenance here?
         local last = nothing
-        sc = SyntaxContext(mod, version)
+        sc = SyntaxContext(mod, Core.get_edition(mod))
         for c in children(st)
             last = eval(mod, expr_to_est(
                 mapexpr(est_to_expr(c)), first_linenode(c), sc))

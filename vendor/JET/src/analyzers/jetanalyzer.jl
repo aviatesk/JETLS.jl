@@ -125,7 +125,7 @@ CC.maybe_compress_codeinfo(::JETAnalyzer, ::MethodInstance, ::CodeInfo) = nothin
 # and so the cost of running the optimization passes is just unnecessary
 CC.may_optimize(::JETAnalyzer) = false
 
-CC.method_table(analyzer::JETAnalyzer) = analyzer.method_table
+CC.method_table(analyzer::JETAnalyzer) = current_method_table(analyzer, analyzer.method_table)
 
 """
     IntrinsicErrorCheckLattice <: AbstractLattice
@@ -341,6 +341,8 @@ function CC.finish!(analyzer::JETAnalyzer, caller::InferenceState, validation_wo
         Core.eval(@__MODULE__, :(src = $src))
         throw("unexpected state happened, inspect `$(@__MODULE__).src`")
     end
+
+    discard_assigned_global_reports!(analyzer, caller)
 
     return @invoke CC.finish!(analyzer::ToplevelAbstractAnalyzer, caller::InferenceState, validation_world::UInt, time_before::UInt64)
 end
@@ -1200,6 +1202,24 @@ function _report_undef_global_var!(analyzer::JETAnalyzer, sv::InferenceState, bi
     return true
 end
 
+# Discard the reports for the global bindings that the top-level `frame` certainly assigns
+# before it reads them, which is not known yet when `_report_undef_global_var!` sees a read.
+# The first frame of a report of `frame` points to the statement of `frame` that reads the
+# binding or that calls the code reading it.
+function discard_assigned_global_reports!(analyzer::JETAnalyzer, frame::InferenceState)
+    istoplevelframe(frame) || return nothing
+    isempty(get_assignment_sites(analyzer)) && return nothing
+    filter!(get_reports(analyzer, frame.result)) do @nospecialize(report::InferenceErrorReport)
+        report isa UndefVarErrorReport || return true
+        var = report.var
+        var isa GlobalRef || return true
+        vf = first(report.vst)
+        vf.linfo === frame.linfo || return true
+        return !is_assigned_at(analyzer, frame, convert(Core.Binding, var), vf.pc)
+    end
+    return nothing
+end
+
 # static parameter
 # ----------------
 
@@ -1648,9 +1668,28 @@ function report_getfield!(analyzer::JETAnalyzer, sv::InferenceState, argtypes::A
     if ret === Any
         report_getglobal!(analyzer, sv, argtypes) && return true
     elseif ret === Bottom
+        @static if isdefinedglobal(Core, :TypeEgal)
+            is_type_kind_getproperty_fallback(sv, argtypes) && return true
+        end
         report_fieldaccess!(analyzer, sv, getfield, argtypes) && return true
     end
     return false
+end
+
+@static if isdefinedglobal(Core, :TypeEgal)
+# `Type{T}` types are kinds of their own since Julia 1.14, on which Base keeps property
+# access working with `getproperty` methods that fall back to `getfield`. These methods also
+# match a receiver that is only known to be some type object, as in `T.a` guarded by
+# `T isa Union`, for which the fallback is unreachable, which inference cannot prove.
+function is_type_kind_getproperty_fallback(sv::InferenceState, argtypes::Argtypes)
+    def = sv.linfo.def
+    def isa Method && def.name === :getproperty && def.module === Base || return false
+    isempty(argtypes) && return false
+    obj = argtypes[1]
+    obj isa Const && return false
+    typ = widenconst(obj)
+    return typ === Core.TypeEq || typ === Core.TypeEgal
+end
 end
 
 report_getglobal!(analyzer::JETAnalyzer, sv::InferenceState, argtypes::Argtypes, @nospecialize(ret)) =
