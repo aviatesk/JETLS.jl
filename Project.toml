@@ -12,12 +12,12 @@ JETLSCore = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
 TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
 [sources]
-JET = {rev = "2cc0e83baf", url = "https://github.com/aviatesk/JET.jl"}
+JET = {rev = "67af968f98", url = "https://github.com/aviatesk/JET.jl"}
 JETLSCore = {path = "JETLSCore"}
 TestRunner = {path = "TestRunner"}
 
 [compat]
-JET = "0.13"
+JET = "0.13.2"
 JETLSCore = "0.1"
 TestRunner = "0.1"
 julia = "1.12.2 - 1.15"
