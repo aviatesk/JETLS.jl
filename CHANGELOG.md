@@ -62,6 +62,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed false positive [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error) diagnostics on Julia 1.14 for a field access guarded by the kind of a type object, as in `T isa Union ? T.a : T` where `T` is a static parameter.
 
+- Fixed find-references, document-highlight, rename, and the features on local bindings such as go-to-definition and hover not working within a definition that contains a macro call with arguments after `;`, splatted arguments, or a `do` block, such as `@mymacro(x; flag=true)`, `@printf(fmt, xs...)`, or `@mymacro(x) do ... end`, and [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import) being falsely reported for names used only in such a definition.
+
 ## 2026-11-14
 
 - Commit: [`40a5e9c`](https://github.com/aviatesk/JETLS.jl/commit/40a5e9c)
