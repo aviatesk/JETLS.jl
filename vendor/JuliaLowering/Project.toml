@@ -13,10 +13,14 @@ JuliaSyntax = "02a177f8-2b16-5240-a0b4-02ed40703cda"
 BaseSyntax = "bfd32023-066c-5f76-8dc3-939c60a69aeb"
 
 [sources.JuliaSyntax]
-path = "../JuliaSyntax"
+subdir = "vendor/JuliaSyntax"
+rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.BaseSyntax]
-path = "../BaseSyntax"
+subdir = "vendor/BaseSyntax"
+rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [targets]
 test = ["Test", "Markdown", "REPL"]
