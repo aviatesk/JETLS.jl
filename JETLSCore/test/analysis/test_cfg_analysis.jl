@@ -1119,12 +1119,9 @@ end
 @testset "tryfinally with terminating try body" begin
     # When the try body always terminates (e.g. `return`), post-try is
     # unreachable: any use of a local there should NOT be flagged as
-    # potentially undefined, since that use never executes. Without
-    # `:tryfinally`'s special handling for a terminated try body, the
-    # use would be reachable via the gotoifnot bypass through finally,
-    # making the post-try use look reachable from the entry on a path
-    # that misses the try-body assignment, and `x` would surface as
-    # `nothing` (potentially undef) — a false positive.
+    # potentially undefined, since that use never executes. The finally
+    # body entered from the exception path or the `return` must not fall
+    # through to post-try.
     let status = get_undef_status("""
         function f()
             local x
@@ -1155,24 +1152,173 @@ end
         """)
         @test status["x"] === false
     end
+end
 
-    # Sanity check that the regular tryfinally case (try body doesn't
-    # terminate) still tracks definedness through the gotoifnot bypass:
-    # if the only assignment is in the try body, the use post-try might
-    # not have executed when control reached finally via the exception
-    # path, so x stays `nothing` (potentially undef).
+@testset "tryfinally: only normal completion continues after finally" begin
+    # aviatesk/JETLS.jl#1073: an exception from the try body runs the
+    # finally body and is rethrown, so a use after the statement always
+    # sees the try-body assignment.
     let status = get_undef_status("""
-        function f()
+        function f(g)
             local x
             try
-                x = compute()
+                x = g()
+            finally
+                println("cleanup")
+            end
+            return x
+        end
+        """)
+        @test status["x"] === false
+    end
+
+    # The finally body itself still runs on the exception path.
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                x = g()
+            finally
+                println(x)
+            end
+        end
+        """)
+        @test status["x"] === nothing
+    end
+
+    # A `return` in the try body leaves the function after the finally body.
+    let status = get_undef_status("""
+        function f(g, c)
+            local x
+            try
+                c && return nothing
+                x = g()
             finally
                 cleanup()
             end
             return x
         end
         """)
+        @test status["x"] === false
+    end
+
+    # An exception rethrown after an inner finally body reaches the outer
+    # `catch`, but not the code after the inner `try`.
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                try
+                    x = g()
+                finally
+                    cleanup()
+                end
+                println(x)
+            catch
+            end
+        end
+        """)
+        @test status["x"] === false
+    end
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                try
+                    x = g()
+                finally
+                    cleanup()
+                end
+            catch
+                println(x)
+            end
+        end
+        """)
         @test status["x"] === nothing
+    end
+
+    # A `return` through an inner finally body leaves the function even when
+    # an outer `catch` exists, so the use after it is not always reached.
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                try
+                    return g()
+                finally
+                    cleanup()
+                end
+            catch
+            end
+            println(x)
+            x = 1
+        end
+        """)
+        @test status["x"] === nothing
+    end
+    # Without a `return`, the outer `catch` always continues to the use.
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                try
+                    g()
+                finally
+                    cleanup()
+                end
+            catch
+            end
+            println(x)
+            x = 1
+        end
+        """)
+        @test status["x"] === true
+    end
+
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                step()
+            finally
+                println(x)
+                x = 1
+            end
+        end
+        """)
+        @test status["x"] === true
+    end
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                return 0
+            finally
+                println(x)
+                x = 1
+            end
+        end
+        """)
+        @test status["x"] === true
+    end
+
+    # Correlated conditions recorded in the finally body still apply after it.
+    let status = get_undef_status("""
+        function f(c)
+            local y
+            try
+                step()
+            finally
+                if c
+                    y = 1
+                end
+            end
+            if c
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
     end
 end
 
@@ -1586,6 +1732,30 @@ end
         @test !haskey(ds, "x")
     end
 
+    # A `return` continues through the outer finally even when an exception
+    # from the inner finally would be caught by a `catch` in between.
+    let ds = get_dead_stores("""
+        function f(g)
+            local x
+            try
+                try
+                    try
+                        x = g()
+                        return nothing
+                    finally
+                        cleanup()
+                    end
+                catch
+                    x = nothing
+                end
+            finally
+                println(x)
+            end
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+
     # Sanity: a `return` outside any tryfinally still kills the
     # preceding assignment (no finally to flow through). The use after
     # `return` is unreachable, so the assignment cannot reach it.
@@ -1637,6 +1807,24 @@ end
         end
         """)
         @test ds["x"] == 1
+    end
+end
+
+@testset "tryfinally: only normal completion continues after finally" begin
+    # The assignment is dead on the exception path, but the normal
+    # completion reaches the use after the statement.
+    let ds = get_dead_stores("""
+        function f()
+            local x
+            try
+                step()
+            finally
+                x = 1
+            end
+            return x
+        end
+        """)
+        @test !haskey(ds, "x")
     end
 end
 
@@ -2055,6 +2243,18 @@ end
         """)
         @test "x = 2" in urs
     end
+    # The finally body still runs after the `return`.
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            finally
+                cleanup()
+            end
+        end
+        """)
+        @test isempty(urs)
+    end
     let urs = get_unreachable_statements("""
         function f()
             try
@@ -2141,8 +2341,8 @@ end
 
     # Both try and catch terminate, finally falls through. The inner
     # `:trycatchelse`'s end-block has no incoming edge from any reachable
-    # block, and `:tryfinally`'s on-demand reachability check picks that
-    # up, so post-try is detected as unreachable.
+    # block, so the finally body copy that continues to post-try is
+    # unreachable as well.
     let urs = get_unreachable_statements("""
         function f()
             try

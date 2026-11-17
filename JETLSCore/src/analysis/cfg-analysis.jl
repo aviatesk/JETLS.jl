@@ -104,12 +104,12 @@ mutable struct EventLinearizer
     # resolved at finalization, even when the preceding fall-through (before_block) is
     # unreachable.
     const statement_blocks::Vector{StatementRecord}
-    # Stack of enclosing `:tryfinally` finally-block label IDs. Pushed before linearizing
-    # the try body and popped before the finally body (so it is empty inside the finally
-    # body itself). Consulted by `:return` so that a return inside `try` routes through
-    # the innermost enclosing finally — modeling the runtime semantics of "finally runs
-    # before the return takes effect" — and an assignment in the try body can correctly
-    # reach a use in the finally body.
+    # Stack of the label IDs that a `return` in the try body of each enclosing `:tryfinally`
+    # jumps to. Pushed before linearizing the try body and popped before the finally body
+    # (so it is empty inside the finally body itself). Consulted by `:return` so that a
+    # return inside `try` routes through the innermost enclosing finally — modeling the
+    # runtime semantics of "finally runs before the return takes effect" — and an
+    # assignment in the try body can correctly reach a use in the finally body.
     const active_finally_labels::Vector{Int}
     # Stack of label IDs of the exception handlers (catch or finally blocks) whose try body
     # is being linearized. Each is pushed only around its try body, so the innermost entry
@@ -624,13 +624,14 @@ function linearize_cfg_events!(
 
     elseif k == :tryfinally
         finally_label = cfg_make_label!(lin)
+        return_label = cfg_make_label!(lin)
         end_label = cfg_make_label!(lin)
 
         cfg_emit_gotoifnot!(lin, finally_label)
         # `active_finally_labels` is consulted by `:return` (and only spans the try body
         # — `pop!` happens before linearizing the finally body so a `return` inside
         # `finally` is not redirected back to itself).
-        push!(lin.active_finally_labels, finally_label)
+        push!(lin.active_finally_labels, return_label)
         push!(lin.active_handler_labels, finally_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
@@ -639,25 +640,35 @@ function linearize_cfg_events!(
         pop!(lin.active_handler_labels)
         pop!(lin.active_finally_labels)
 
-        # If the try body terminated, post-try is unreachable; the finally body still
-        # runs (modeled via the entry-bypass `gotoifnot` and any `:return`-routed
-        # pending gotos from inside the try body) but its completion does not flow
-        # into post-try. This check is correct even after returns add pending gotos
-        # to `finally_label` because `is_block_reachable_from_entry` only follows
-        # pending gotos to already-resolved labels, and `finally_label` is registered
-        # below by `cfg_emit_label!`.
-        try_body_terminated = !is_block_reachable_from_entry(lin, lin.current_block)
-
-        cfg_emit_label!(lin, finally_label)
+        # Like lowering, linearize the finally body twice, since only the normal completion
+        # of the try body continues after the statement. The other copy is entered at
+        # `finally_label` by exceptions and at `return_label` by routed `return`s. After it,
+        # an exception is rethrown to the enclosing handler and a `return` continues through
+        # the enclosing finally; either leaves the lambda when there is none.
+        saved = undef_save_cond_implied(lin)
         linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+        after_normal = undef_save_cond_implied(lin)
+        cfg_emit_goto!(lin, end_label)
 
-        if try_body_terminated
-            end_block = cfg_new_block!(lin)
-            lin.label_to_block[end_label] = end_block
-            cfg_switch_to_block!(lin, end_block)
-        else
-            cfg_emit_label!(lin, end_label)
+        copy!(lin.cond_implies_defined, saved)
+        cfg_emit_label!(lin, finally_label)
+        lin.label_to_block[return_label] = lin.current_block
+        has_return = any(((_, label),) -> label == return_label, lin.pending_gotos)
+        linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+        if !isempty(lin.active_handler_labels)
+            push!(lin.pending_gotos, (lin.current_block, last(lin.active_handler_labels)))
         end
+        if has_return
+            if isempty(lin.active_finally_labels)
+                cfg_add_edge!(lin, lin.current_block, cfg_new_block!(lin))
+            else
+                push!(lin.pending_gotos, (lin.current_block, last(lin.active_finally_labels)))
+            end
+        end
+        cfg_switch_to_block!(lin, cfg_new_block!(lin))
+        copy!(lin.cond_implies_defined, after_normal)
+
+        cfg_emit_label!(lin, end_label)
 
     elseif k == :return
         if JS.numchildren(ex3) >= 1
@@ -767,17 +778,29 @@ function cfg_reachable_targets(
     return reached
 end
 
-# Check if a block is "must-execute" (all paths from entry pass through it).
-# This is equivalent to: entry cannot reach exit without going through the block.
+# Check if a set of blocks is "must-execute" (all paths from entry pass through one of them).
+# This is equivalent to: entry cannot reach exit without going through any of the blocks.
 # When `exit_blocks` / `visited` are supplied by the caller they are reused
 # across repeated calls for the same CFG, avoiding redundant allocation.
 function cfg_is_must_execute(
-        blocks::Vector{EventBlock}, block_id::Int, exit_blocks::BitSet, visited::BitSet
+        blocks::Vector{EventBlock}, block_ids::BitSet, exit_blocks::BitSet, visited::BitSet
     )
     isempty(exit_blocks) && return true
-    avoid = BitSet([block_id])
-    can_bypass = cfg_can_reach_avoiding(blocks, 1, exit_blocks, avoid, visited)
+    can_bypass = cfg_can_reach_avoiding(blocks, 1, exit_blocks, block_ids, visited)
     return !can_bypass
+end
+
+# Group `block_ids` by their event tree, in order of first appearance. An event in a
+# finally body has a block per copy of the body (see `:tryfinally`).
+function group_blocks_by_tree(block_ids, event_trees::Dict{Int,SyntaxTree})
+    groups = Pair{SyntaxTree,BitSet}[]
+    group_index = Dict{SyntaxTree,Int}()
+    for block_id in block_ids
+        i = get!(group_index, event_trees[block_id], length(groups) + 1)
+        i > length(groups) && push!(groups, event_trees[block_id] => BitSet())
+        push!(groups[i].second, block_id)
+    end
+    return groups
 end
 
 # Collect candidate variables captured by any nested closure.  The CFG
@@ -799,39 +822,6 @@ function collect_closure_captured_vars(body::SyntaxTree, candidates::Set{JL.IdTa
         return nothing
     end
     return result
-end
-
-# On-demand reachability check on the partially-built CFG. Like
-# `compute_reachable_blocks`, but additionally treats `pending_gotos`
-# whose target labels have already been emitted as edges, so it gives a
-# correct answer mid-linearization (before `cfg_finalize!` resolves
-# pending entries into real edges). Used by `:tryfinally` to decide
-# whether the try body fell through.
-function is_block_reachable_from_entry(lin::EventLinearizer, target::Int)
-    target == 1 && return true
-    visited = falses(length(lin.blocks))
-    visited[1] = true
-    stack = Int[1]
-    while !isempty(stack)
-        b = pop!(stack)
-        b == target && return true
-        for s in lin.blocks[b].succs
-            if !visited[s]
-                visited[s] = true
-                push!(stack, s)
-            end
-        end
-        for (from, label_id) in lin.pending_gotos
-            from == b || continue
-            haskey(lin.label_to_block, label_id) || continue
-            to = lin.label_to_block[label_id]
-            if !visited[to]
-                visited[to] = true
-                push!(stack, to)
-            end
-        end
-    end
-    return false
 end
 
 """
@@ -940,13 +930,18 @@ end
 
 # Reachability-based unreachable-statement detection on a built CFG. Adds to
 # `unreachable_statements` every recorded statement whose entry and exit CFG blocks are
-# both unreachable from the lambda entry.
+# both unreachable from the lambda entry. A statement in a finally body has a record per
+# copy of the body (see `:tryfinally`) and is added only when every copy is unreachable.
 function analyze_unreachable!(
         unreachable_statements::Set{SyntaxTree}, cfg::LambdaCFG
     )
+    is_reachable(rec::StatementRecord) =
+        rec.before_block in cfg.reachable || rec.after_block in cfg.reachable
+    all(is_reachable, cfg.lin.statement_blocks) && return unreachable_statements
+    reachable_statements = Set{SyntaxTree}(
+        rec.st for rec in cfg.lin.statement_blocks if is_reachable(rec))
     for rec in cfg.lin.statement_blocks
-        (rec.before_block in cfg.reachable || rec.after_block in cfg.reachable) && continue
-        push!(unreachable_statements, rec.st)
+        rec.st in reachable_statements || push!(unreachable_statements, rec.st)
     end
     return unreachable_statements
 end
@@ -1019,22 +1014,28 @@ function analyze_local_def_use!(
                 push!(use_blocks, evt.block_id)
             end
         end
+        length(defs) > 1 && unique!(defs) # copies in finally bodies
 
         # --- Undef analysis ---
         if isempty(use_blocks)
             undef_info[binfo] = UndefInfo(defs, Pair{Bool,SyntaxTree}[])
         elseif isempty(assign_blocks)
-            undef_uses = Pair{Bool,SyntaxTree}[true => event_trees[ub] for ub in use_blocks]
+            undef_uses = Pair{Bool,SyntaxTree}[
+                true => use_tree for use_tree in unique(event_trees[ub] for ub in use_blocks)]
             undef_info[binfo] = UndefInfo(defs, undef_uses)
         else
             reached = cfg_reachable_targets(cfg.lin.blocks, 1, use_blocks, assign_blocks, visited)
             if !isempty(reached)
-                min_assign_block = minimum(assign_blocks)
+                # Unreachable assignments never precede a use.
+                min_assign_block = minimum(
+                    Iterators.filter(in(cfg.reachable), assign_blocks); init=typemax(Int))
                 undef_uses = Pair{Bool,SyntaxTree}[]
-                for ub in reached
-                    is_strict = ub < min_assign_block &&
-                                cfg_is_must_execute(cfg.lin.blocks, ub, cfg.exit_blocks, visited)
-                    push!(undef_uses, is_strict => event_trees[ub])
+                for (use_tree, ubs) in group_blocks_by_tree(reached, event_trees)
+                    # Compare the first copy, since later copies of a finally body are
+                    # linearized after the assignments in the earlier ones.
+                    is_strict = first(ubs) < min_assign_block &&
+                                cfg_is_must_execute(cfg.lin.blocks, ubs, cfg.exit_blocks, visited)
+                    push!(undef_uses, is_strict => use_tree)
                 end
                 undef_info[binfo] = UndefInfo(defs, undef_uses)
             else
@@ -1049,17 +1050,21 @@ function analyze_local_def_use!(
         end
         dead_defs = SyntaxTree[]
         other_assigns = BitSet()
-        for def_block_id in real_assign_blocks
-            def_block_id in cfg.reachable || continue
-            empty!(other_assigns)
-            for ab in real_assign_blocks
-                ab != def_block_id && push!(other_assigns, ab)
+        reachable_def_blocks = Iterators.filter(in(cfg.reachable), real_assign_blocks)
+        for (def_tree, def_block_ids) in group_blocks_by_tree(reachable_def_blocks, event_trees)
+            is_dead = true
+            for def_block_id in def_block_ids
+                empty!(other_assigns)
+                for ab in real_assign_blocks
+                    ab != def_block_id && push!(other_assigns, ab)
+                end
+                if cfg_can_reach_avoiding(
+                        cfg.lin.blocks, def_block_id, use_blocks, other_assigns, visited)
+                    is_dead = false
+                    break
+                end
             end
-            can_reach_use = cfg_can_reach_avoiding(
-                cfg.lin.blocks, def_block_id, use_blocks, other_assigns, visited)
-            if !can_reach_use
-                push!(dead_defs, event_trees[def_block_id])
-            end
+            is_dead && push!(dead_defs, def_tree)
         end
         if !isempty(dead_defs)
             dead_store_info[binfo] = DeadStoreInfo(dead_defs)
