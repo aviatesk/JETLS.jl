@@ -53,6 +53,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables that are assigned in a `try` block and used after its `finally` block:
+  ```julia
+  function f(g)
+      local x
+      try
+          x = g()
+      finally
+          println("cleanup")
+      end
+      return x # was reported as possibly undefined
+  end
+  ```
+  JETLS now treats code after a `try`/`finally` as reached only when the `try` block completes without throwing.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1073)
+
 ## 2026-11-16
 
 - Commit: [`56a6f4a`](https://github.com/aviatesk/JETLS.jl/commit/56a6f4a)

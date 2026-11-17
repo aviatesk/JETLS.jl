@@ -2409,6 +2409,42 @@ end
             @test length(diagnostic.relatedInformation) == 2
         end
     end
+
+    @testset "try-finally - use after the statement (aviatesk/JETLS.jl#1073)" begin
+        @test isempty(get_lowering_diagnostics("""
+            function f(g)
+                local x
+                try
+                    x = g()
+                finally
+                    println("cleanup")
+                end
+                return x
+            end
+            """))
+    end
+
+    @testset "try-finally - definition in the finally body is shown once" begin
+        let diagnostics = get_lowering_diagnostics("""
+            function f(g)
+                local x
+                try
+                    g()
+                finally
+                    if rand() > 0.5
+                        x = 1
+                    end
+                end
+                return x
+            end
+            """)
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            ri = only(something(diagnostic.relatedInformation))
+            @test ri.location.range.start.line == 6
+        end
+    end
 end
 
 @testset HierarchicalTestSet "dead store detection" begin
