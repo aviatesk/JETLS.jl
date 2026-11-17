@@ -778,18 +778,6 @@ function cfg_reachable_targets(
     return reached
 end
 
-# Check if a set of blocks is "must-execute" (all paths from entry pass through one of them).
-# This is equivalent to: entry cannot reach exit without going through any of the blocks.
-# When `exit_blocks` / `visited` are supplied by the caller they are reused
-# across repeated calls for the same CFG, avoiding redundant allocation.
-function cfg_is_must_execute(
-        blocks::Vector{EventBlock}, block_ids::BitSet, exit_blocks::BitSet, visited::BitSet
-    )
-    isempty(exit_blocks) && return true
-    can_bypass = cfg_can_reach_avoiding(blocks, 1, exit_blocks, block_ids, visited)
-    return !can_bypass
-end
-
 # Group `block_ids` by their event tree, in order of first appearance. An event in a
 # finally body has a block per copy of the body (see `:tryfinally`).
 function group_blocks_by_tree(block_ids, event_trees::Dict{Int,SyntaxTree})
@@ -863,7 +851,7 @@ Fields:
 - `var_events::Dict{JL.IdTag, Vector{VarEvent}}`: per-variable event list indexed by
   `var_id`, avoiding O(blocks × candidates) scans during analysis
 - `exit_blocks::BitSet`: CFG blocks with no successors, used for
-  must-execute queries during undef analysis
+  strict-undef queries during undef analysis
 - `reachable::BitSet`: CFG blocks reachable from the lambda entry
 """
 struct LambdaCFG
@@ -917,7 +905,7 @@ function build_lambda_cfg(
         push!(evts, VarEvent(evt.kind, block.id, evt.st))
     end
 
-    # Pre-compute exit blocks (no successors) for must-execute checks.
+    # Pre-compute exit blocks (no successors) for strict-undef checks.
     exit_blocks = BitSet()
     for b in lin.blocks
         isempty(b.succs) && push!(exit_blocks, b.id)
@@ -1026,15 +1014,13 @@ function analyze_local_def_use!(
         else
             reached = cfg_reachable_targets(cfg.lin.blocks, 1, use_blocks, assign_blocks, visited)
             if !isempty(reached)
-                # Unreachable assignments never precede a use.
-                min_assign_block = minimum(
-                    Iterators.filter(in(cfg.reachable), assign_blocks); init=typemax(Int))
+                bypass_targets = union(assign_blocks, cfg.exit_blocks)
                 undef_uses = Pair{Bool,SyntaxTree}[]
                 for (use_tree, ubs) in group_blocks_by_tree(reached, event_trees)
-                    # Compare the first copy, since later copies of a finally body are
-                    # linearized after the assignments in the earlier ones.
-                    is_strict = first(ubs) < min_assign_block &&
-                                cfg_is_must_execute(cfg.lin.blocks, ubs, cfg.exit_blocks, visited)
+                    # Strict if every execution reaches the use before any assignment, i.e.
+                    # no assignment or exit is reachable from the entry without the use.
+                    is_strict = !cfg_can_reach_avoiding(
+                        cfg.lin.blocks, 1, bypass_targets, ubs, visited)
                     push!(undef_uses, is_strict => use_tree)
                 end
                 undef_info[binfo] = UndefInfo(defs, undef_uses)
