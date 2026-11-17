@@ -70,6 +70,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   JETLS now treats code after a `try`/`finally` as reached only when the `try` block completes without throwing.
   (Closed https://github.com/aviatesk/JETLS.jl/issues/1073)
 
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) warnings ("is used before it is defined") on variables used in a loop before an assignment that an earlier iteration may have run:
+  ```julia
+  function f(c)
+      local x
+      while true
+          c && return x # was reported as used before it is defined
+          x = 1
+          c = true
+      end
+  end
+  ```
+  Such uses are now reported as "may be used before it is defined".
+
 ## 2026-11-16
 
 - Commit: [`56a6f4a`](https://github.com/aviatesk/JETLS.jl/commit/56a6f4a)

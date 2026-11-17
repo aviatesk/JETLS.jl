@@ -166,6 +166,50 @@ end
     @test status["y"] === false
 end
 
+@testset "loop back edge before a use" begin
+    # `f(false)` assigns `x` in the first iteration and returns it in the second.
+    status = get_undef_status("""
+    function f(c)
+        local x
+        while true
+            c && return x
+            x = 1
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # An unreachable assignment does not change that.
+    status = get_undef_status("""
+    function f(c)
+        local x
+        while true
+            break
+            x = 0
+        end
+        while true
+            c && return x
+            x = 1
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Every execution reaches the use in the first iteration before the assignment.
+    status = get_undef_status("""
+    function f()
+        local x
+        while true
+            println(x)
+            x = 1
+        end
+    end
+    """)
+    @test status["x"] === true
+end
+
 @testset "for loop" begin
     # Loop may not execute (empty range) - may be undefined
     status = get_undef_status("""
