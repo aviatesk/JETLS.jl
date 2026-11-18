@@ -1515,6 +1515,84 @@ end
     end
 end
 
+@testset "`break` through finally" begin
+    # The finally body runs before the loop is left.
+    status = get_undef_status("""
+    function f()
+        local y
+        while true
+            try
+                break
+            finally
+                y = 1
+            end
+        end
+        return y
+    end
+    """)
+    @test status["y"] === false
+
+    # Exceptions going through the finally body do not continue to the target.
+    status = get_undef_status("""
+    function f()
+        local y
+        while true
+            try
+                y = 1
+                break
+            finally
+                nothing
+            end
+        end
+        return y
+    end
+    """)
+    @test status["y"] === false
+
+    # The finally bodies of all `try`s left run before the loop is left.
+    status = get_undef_status("""
+    function f()
+        local y
+        while true
+            try
+                try
+                    break
+                finally
+                    nothing
+                end
+            finally
+                y = 1
+            end
+        end
+        return y
+    end
+    """)
+    @test status["y"] === false
+
+    # The `@goto` in each copy of the finally body jumps to the `@label` in the same copy,
+    # so an exception does not continue to the loop exit.
+    status = get_undef_status("""
+    function f()
+        local x
+        z = 1
+        while true
+            try
+                x = 1
+                break
+            finally
+                (() -> begin
+                    @goto done
+                    @label done
+                    z
+                end)()
+            end
+        end
+        return x
+    end
+    """)
+    @test status["x"] === false
+end
+
 @testset "@something short-circuit control flow" begin
     # `@something(a, b)` only evaluates `b` when `a` is `nothing`. An
     # assignment that lives inside a later argument is therefore conditional,
@@ -2659,6 +2737,23 @@ end
         end
         """)
         @test urs == ["x = 2"]
+    end
+end
+
+@testset "`break` through a finally body that returns" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            while true
+                try
+                    break
+                finally
+                    return 1
+                end
+            end
+            cleanup()
+        end
+        """)
+        @test urs == ["cleanup()"]
     end
 end
 
