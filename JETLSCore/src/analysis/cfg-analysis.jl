@@ -519,12 +519,10 @@ function linearize_cfg_events!(
     elseif k == :if || k == :elseif
         # if cond then_branch [else_branch]
         cond = ex3[1]
-        linearize_cfg_events!(lin, ctx3, cond, candidates, allow_noreturn_optimization)
-
         end_label = cfg_make_label!(lin)
         else_label = cfg_make_label!(lin)
 
-        cfg_emit_gotoifnot!(lin, else_label)
+        linearize_cond_branch!(lin, ctx3, cond, else_label, candidates, allow_noreturn_optimization)
 
         # Special case: if the condition implies @isdefined(var), the var is
         # definitely defined on that branch. This handles direct
@@ -567,9 +565,8 @@ function linearize_cfg_events!(
 
         cfg_emit_label!(lin, top_label)
         cond = ex3[1]
-        linearize_cfg_events!(lin, ctx3, cond, candidates, allow_noreturn_optimization)
         if !(JS.head(cond) === :value && cond.value === true)
-            cfg_emit_gotoifnot!(lin, end_label)
+            linearize_cond_branch!(lin, ctx3, cond, end_label, candidates, allow_noreturn_optimization)
         end
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
@@ -686,27 +683,8 @@ function linearize_cfg_events!(
         end
 
     elseif k == :block
-        # Record each direct child as a "statement" tagged with both the
-        # block where execution would arrive at the child (before) and the
-        # block execution leaves it in (after). Used by reachability-based
-        # unreachable analysis: a statement is reachable iff EITHER block
-        # is reachable from the entry. Tracking the after-block matters for
-        # forms like `:symboliclabel` whose own block becomes reachable
-        # only via a `:symbolicgoto` edge resolved at finalization, even
-        # though fall-through from the previous statement is unreachable.
         for child in JS.children(ex3)
-            before_block = lin.current_block
-            linearize_cfg_events!(lin, ctx3, child, candidates, allow_noreturn_optimization)
-            after_block = lin.current_block
-            push!(lin.statement_blocks, StatementRecord(before_block, after_block, child))
-            # Inside a `try` body, model "exception thrown between statements escapes
-            # to the enclosing handler" by branching to the innermost active catch or
-            # finally at every statement boundary. Combined with the entry-bypass
-            # `gotoifnot` of `:trycatchelse` and `:tryfinally`, this covers exception
-            # escape at every point in the try body.
-            if !isempty(lin.active_handler_labels)
-                cfg_emit_gotoifnot!(lin, last(lin.active_handler_labels))
-            end
+            linearize_statement!(lin, ctx3, child, candidates, allow_noreturn_optimization)
         end
 
     else # Default: process all children
@@ -719,6 +697,81 @@ function linearize_cfg_events!(
             unreachable = cfg_new_block!(lin)
             cfg_switch_to_block!(lin, unreachable)
         end
+    end
+end
+
+# Linearize a direct child `st` of a `:block`, recording it as a "statement" tagged with both
+# the block where execution would arrive at it (before) and the block execution leaves it
+# in (after). Used by reachability-based unreachable analysis: a statement is reachable iff
+# EITHER block is reachable from the entry. Tracking the after-block matters for forms like
+# `:symboliclabel` whose own block becomes reachable only via a `:symbolicgoto` edge resolved
+# at finalization, even though fall-through from the previous statement is unreachable.
+function linearize_statement!(
+        lin::EventLinearizer, ctx3::JL.VariableAnalysisContext, st::SyntaxTree,
+        candidates::Set{JL.IdTag}, allow_noreturn_optimization::Vector{Symbol}
+    )
+    before_block = lin.current_block
+    linearize_cfg_events!(lin, ctx3, st, candidates, allow_noreturn_optimization)
+    push!(lin.statement_blocks, StatementRecord(before_block, lin.current_block, st))
+    # Inside a `try` body, model "exception thrown between statements escapes
+    # to the enclosing handler" by branching to the innermost active catch or
+    # finally at every statement boundary. Combined with the entry-bypass
+    # `gotoifnot` of `:trycatchelse` and `:tryfinally`, this covers exception
+    # escape at every point in the try body.
+    cfg_emit_exception_edge!(lin)
+end
+
+function cfg_emit_exception_edge!(lin::EventLinearizer)
+    if !isempty(lin.active_handler_labels)
+        cfg_emit_gotoifnot!(lin, last(lin.active_handler_labels))
+    end
+end
+
+# Linearize the condition `cond` of a branch to `false_label`, continuing where it holds.
+# Like lowering, each operand of `&&` and `||` branches directly, so later operands are
+# evaluated only if the earlier ones do not decide the branch.
+function linearize_cond_branch!(
+        lin::EventLinearizer, ctx3::JL.VariableAnalysisContext, cond::SyntaxTree,
+        false_label::Int, candidates::Set{JL.IdTag}, allow_noreturn_optimization::Vector{Symbol}
+    )
+    k = JS.head(cond)
+    if k == :block && JS.numchildren(cond) >= 1 && JS.head(cond[end]) in (:&&, :||)
+        # The last statement decides the branch.
+        for i in 1:JS.numchildren(cond)-1
+            linearize_statement!(lin, ctx3, cond[i], candidates, allow_noreturn_optimization)
+        end
+        before_block = lin.current_block
+        linearize_cond_branch!(
+            lin, ctx3, cond[end], false_label, candidates, allow_noreturn_optimization)
+        push!(lin.statement_blocks, StatementRecord(before_block, lin.current_block, cond[end]))
+    elseif k == :&&
+        for operand in JS.children(cond)
+            linearize_cfg_events!(lin, ctx3, operand, candidates, allow_noreturn_optimization)
+            cfg_emit_exception_edge!(lin) # as between statements
+            cfg_emit_gotoifnot!(lin, false_label)
+            undef_emit_isdefined_hints!(lin, ctx3, operand, candidates, true)
+        end
+    elseif k == :||
+        true_label = cfg_make_label!(lin)
+        for (i, operand) in enumerate(JS.children(cond))
+            linearize_cfg_events!(lin, ctx3, operand, candidates, allow_noreturn_optimization)
+            cfg_emit_exception_edge!(lin) # as between statements
+            if i < JS.numchildren(cond)
+                next_label = cfg_make_label!(lin)
+                cfg_emit_gotoifnot!(lin, next_label)
+                undef_emit_isdefined_hints!(lin, ctx3, operand, candidates, true)
+                cfg_emit_goto!(lin, true_label)
+                cfg_emit_label!(lin, next_label)
+                undef_emit_isdefined_hints!(lin, ctx3, operand, candidates, false)
+            else
+                cfg_emit_gotoifnot!(lin, false_label)
+                undef_emit_isdefined_hints!(lin, ctx3, operand, candidates, true)
+            end
+        end
+        cfg_emit_label!(lin, true_label)
+    else
+        linearize_cfg_events!(lin, ctx3, cond, candidates, allow_noreturn_optimization)
+        cfg_emit_gotoifnot!(lin, false_label)
     end
 end
 
