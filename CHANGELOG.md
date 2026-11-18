@@ -92,6 +92,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   Such uses are now reported as "may be used before it is defined".
 
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) warnings ("is used before it is defined") on variables used in a later operand of `&&` or `||` in a condition, which is not evaluated on every path:
+  ```julia
+  function f(d)
+      local x
+      if d || x # was reported as used before it is defined
+          return 1
+      end
+      x = true
+      return x
+  end
+  ```
+  Such uses are now reported as "may be used before it is defined".
+
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables used in an operand of `&&` or `||` in a condition after an earlier operand checks them with `@isdefined`:
+  ```julia
+  function f(c)
+      c && (x = 1)
+      if @isdefined(x) && x > 0 # `x > 0` was reported as possibly undefined
+          return x
+      end
+  end
+  ```
+
 ## 2026-11-16
 
 - Commit: [`56a6f4a`](https://github.com/aviatesk/JETLS.jl/commit/56a6f4a)

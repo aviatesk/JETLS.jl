@@ -317,6 +317,92 @@ end
     @test status["y"] === false
 end
 
+@testset "short-circuit operand in a condition" begin
+    # `f(true)` returns without evaluating `x`.
+    status = get_undef_status("""
+    function f(d)
+        local x
+        if d || x
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === nothing
+
+    status = get_undef_status("""
+    function f(d)
+        local x
+        while d && x
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Also when the condition is a block ending in `||` or `&&`.
+    status = get_undef_status("""
+    function f(d)
+        local x
+        if (nothing; d || x)
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === nothing
+
+    status = get_undef_status("""
+    function f(d)
+        local x
+        while (nothing; d && x)
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Every execution evaluates the first operand.
+    status = get_undef_status("""
+    function f(d)
+        local x
+        if x || d
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === true
+
+    # Only the executions evaluating every operand of `&&` take the true branch.
+    status = get_undef_status("""
+    function f(c, g)
+        if c && (y = g()) !== nothing
+            return y
+        end
+    end
+    """)
+    @test status["y"] === false
+
+    # Likewise for the false branch of `||`.
+    status = get_undef_status("""
+    function f(c, g)
+        if c || (y = g()) === nothing
+            return nothing
+        end
+        return y
+    end
+    """)
+    @test status["y"] === false
+end
+
 @testset "correlated conditions" begin
     # Simple variable condition: `if x` assigns y, later `if x` uses y
     let status = get_undef_status("""
@@ -889,6 +975,69 @@ end
         end
         """)
         @test status["y"] === false
+    end
+end
+
+@testset "@isdefined(y) in an earlier operand of a condition" begin
+    let status = get_undef_status("""
+        function f(x)
+            if x > 0
+                y = 42
+            end
+            if @isdefined(y) && y > 0
+                return y
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+    let status = get_undef_status("""
+        function f(x)
+            if x > 0
+                y = 42
+            end
+            while @isdefined(y) && y > 0
+                y -= 1
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+    let status = get_undef_status("""
+        function f(x)
+            if x > 0
+                y = 42
+            end
+            if !(@isdefined(y)) || y === nothing
+                return nothing
+            end
+            return y
+        end
+        """)
+        @test status["y"] === false
+    end
+    # The true branch is taken either when `y` is defined or after the assignment.
+    let status = get_undef_status("""
+        function f(c::Bool)
+            if @isdefined(y) || (y = c)
+            end
+            return y
+        end
+        """)
+        @test status["y"] === false
+    end
+    # `c` takes the true branch without `@isdefined(y)`.
+    let status = get_undef_status("""
+        function f(x, c)
+            if x > 0
+                y = 42
+            end
+            if c || @isdefined(y)
+                return y
+            end
+        end
+        """)
+        @test status["y"] === nothing
     end
 end
 
@@ -1482,6 +1631,41 @@ end
     end
     """)
     @test !haskey(ds, "z")
+end
+
+@testset "exception after a short-circuit operand" begin
+    # `f(() -> error())` returns 1.
+    ds = get_dead_stores("""
+    function f(g)
+        x = 0
+        try
+            if (x = 1) == 1 && g()
+                x = 2
+            else
+                x = 3
+            end
+        catch
+        end
+        return x
+    end
+    """)
+    @test !haskey(ds, "x")
+
+    ds = get_dead_stores("""
+    function f(g)
+        x = 0
+        try
+            if (nothing; (x = 1) == 1 && g())
+                x = 2
+            else
+                x = 3
+            end
+        catch
+        end
+        return x
+    end
+    """)
+    @test !haskey(ds, "x")
 end
 
 @testset "multiple dead stores" begin
