@@ -31,10 +31,14 @@
 # because they appear in the returned dicts.
 
 # Per-block variable event recorded on `EventBlock.event`. `kind` is one of
-# `:assign` / `:use` / `:isdefined` (the last is a hint for CFG analysis, not
-# a real def). Using a named struct rather than a `Tuple` keeps the field
-# layout stable for the compiler when stored as an `Union{Nothing, ...}`
-# and avoids per-push tuple boxing in `Vector{...}` containers below.
+# `:assign` / `:use` / `:isdefined` (a hint for CFG analysis, not a real def) /
+# `:implied` (a hint from a correlated condition, which unlike `:isdefined` may
+# be wrong, e.g. when a closure reassigns the condition variable) /
+# `:newvar` (the scope entry of the variable, where it is undefined again, e.g.
+# on every iteration of a loop body declaring it). Using a named struct rather
+# than a `Tuple` keeps the field layout stable for the compiler when stored as
+# an `Union{Nothing, ...}` and avoids per-push tuple boxing in `Vector{...}`
+# containers below.
 struct BlockEvent
     kind::Symbol
     var_id::JL.IdTag
@@ -382,7 +386,7 @@ function undef_invalidate_cond_implies!(lin::EventLinearizer, var_id::JL.IdTag)
     end
 end
 
-# Emit `:isdefined` hints for variables implied by correlated conditions.
+# Emit `:implied` hints for variables implied by correlated conditions.
 # Extracts all BindingId operands asserted true by the condition and checks
 # if any recorded implication key is a subset.
 function undef_emit_cond_implied_hints!(
@@ -402,7 +406,7 @@ function undef_emit_cond_implied_hints!(
         key ⊆ cond_key || continue
         for var_id in implied
             if var_id in candidates
-                cfg_emit_event!(lin, :isdefined, var_id, cond)
+                cfg_emit_event!(lin, :implied, var_id, cond)
             end
         end
     end
@@ -537,7 +541,12 @@ function linearize_cfg_events!(
         end
 
     elseif k == :local
-        # local declarations don't use or assign
+        # Scope resolution places these at the start of each scope, so entering the
+        # scope again, e.g. in the next iteration of a loop, makes a fresh binding.
+        if JS.numchildren(ex3) >= 1 && JS.head(ex3[1]) == :bindingid
+            vid = var_id(ex3[1])
+            vid in candidates && cfg_emit_event!(lin, :newvar, vid, ex3)
+        end
 
     elseif k == :decl
         # decl nodes: the BindingId is declaration, not use; only visit type expression
@@ -848,6 +857,67 @@ function cfg_can_reach_avoiding(
     return false
 end
 
+# Check if an execution from the entry can avoid reaching `use_blocks` while the variable is
+# undefined, i.e. reach an exit, or an assignment after which the variable stays defined,
+# first. Such an execution cannot pass `isdefined_blocks` either. Entering `newvar_blocks`
+# makes the variable undefined again, so it stays defined only outside `renewable`, the
+# blocks that can reach them. Executions that never reach either are not counted, even if
+# they loop forever without the use.
+function cfg_can_avoid_undef_use(
+        blocks::Vector{EventBlock}, use_blocks::BitSet, assign_blocks::BitSet,
+        isdefined_blocks::BitSet, newvar_blocks::BitSet, renewable::BitSet,
+        exit_blocks::BitSet, visited_undef::BitSet, visited_def::BitSet
+    )
+    empty!(visited_undef)
+    empty!(visited_def)
+    worklist = Tuple{Int,Bool}[(1, false)]
+    while !isempty(worklist)
+        block_id, defined = pop!(worklist)
+        if block_id in newvar_blocks
+            defined = false
+        elseif block_id in assign_blocks
+            defined = true
+        end
+        if defined
+            block_id in renewable || return true
+            block_id in visited_def && continue
+            push!(visited_def, block_id)
+        else
+            (block_id in use_blocks || block_id in isdefined_blocks) && continue
+            block_id in exit_blocks && return true
+            block_id in visited_undef && continue
+            push!(visited_undef, block_id)
+        end
+        for succ in blocks[block_id].succs
+            push!(worklist, (succ, defined))
+        end
+    end
+    return false
+end
+
+function cfg_predecessors(blocks::Vector{EventBlock})
+    preds = [Int[] for _ in blocks]
+    for block in blocks, succ in block.succs
+        push!(preds[succ], block.id)
+    end
+    return preds
+end
+
+# Collect into `reaching` the blocks that can reach any block in `targets`.
+function cfg_blocks_reaching!(
+        reaching::BitSet, preds::Vector{Vector{Int}}, targets::BitSet
+    )
+    empty!(reaching)
+    worklist = collect(targets)
+    while !isempty(worklist)
+        block_id = pop!(worklist)
+        block_id in reaching && continue
+        push!(reaching, block_id)
+        append!(worklist, preds[block_id])
+    end
+    return reaching
+end
+
 # Find all use blocks reachable from `start` avoiding `avoid`, sorted by block ID.
 # `visited` is a caller-provided scratch `BitSet` that is cleared on entry.
 function cfg_reachable_targets(
@@ -1075,6 +1145,12 @@ function analyze_local_def_use!(
     isempty(cfg.candidates) && return
 
     visited = BitSet()
+    visited_def = BitSet()
+    renewable = BitSet()
+    preds = nothing
+    # Lowering omits the `newvar` of a variable assigned before any branch, which only a
+    # `@goto` into its scope can observe, so `:newvar`s are ignored in lambdas with labels.
+    ignore_newvars = !isempty(cfg.lin.goto_targets)
     for var_id in cfg.candidates
         binfo = JL.get_binding(ctx3, var_id)
 
@@ -1085,8 +1161,9 @@ function analyze_local_def_use!(
         end
 
         defs = SyntaxTree[]
-        assign_blocks = BitSet()       # for undef (includes :isdefined)
-        real_assign_blocks = BitSet()  # for dead store (only :assign)
+        assign_blocks = BitSet()       # includes :isdefined and :implied
+        real_assign_blocks = BitSet()  # only :assign
+        newvar_blocks = BitSet()
         use_blocks = BitSet()
         event_trees = Dict{Int,SyntaxTree}()
         for evt in evts
@@ -1095,8 +1172,10 @@ function analyze_local_def_use!(
                 push!(defs, evt.st)
                 push!(assign_blocks, evt.block_id)
                 push!(real_assign_blocks, evt.block_id)
-            elseif evt.kind === :isdefined
+            elseif evt.kind === :isdefined || evt.kind === :implied
                 push!(assign_blocks, evt.block_id)
+            elseif evt.kind === :newvar
+                ignore_newvars || push!(newvar_blocks, evt.block_id)
             else # :use
                 push!(use_blocks, evt.block_id)
             end
@@ -1113,13 +1192,20 @@ function analyze_local_def_use!(
         else
             reached = cfg_reachable_targets(cfg.lin.blocks, 1, use_blocks, assign_blocks, visited)
             if !isempty(reached)
-                bypass_targets = union(assign_blocks, cfg.exit_blocks)
+                if isnothing(preds)
+                    preds = cfg_predecessors(cfg.lin.blocks)
+                end
+                cfg_blocks_reaching!(renewable, preds, newvar_blocks)
+                # An execution passes an `:isdefined` hint only after a real assignment.
+                isdefined_blocks = BitSet(
+                    evt.block_id for evt in evts if evt.kind === :isdefined)
                 undef_uses = Pair{Bool,SyntaxTree}[]
                 for (use_tree, ubs) in group_blocks_by_tree(reached, event_trees)
-                    # Strict if every execution reaches the use before any assignment, i.e.
-                    # no assignment or exit is reachable from the entry without the use.
-                    is_strict = !cfg_can_reach_avoiding(
-                        cfg.lin.blocks, 1, bypass_targets, ubs, visited)
+                    # Strict if every execution reaches the use while the variable is
+                    # undefined.
+                    is_strict = !cfg_can_avoid_undef_use(
+                        cfg.lin.blocks, ubs, real_assign_blocks, isdefined_blocks,
+                        newvar_blocks, renewable, cfg.exit_blocks, visited, visited_def)
                     push!(undef_uses, is_strict => use_tree)
                 end
                 undef_info[binfo] = UndefInfo(defs, undef_uses)

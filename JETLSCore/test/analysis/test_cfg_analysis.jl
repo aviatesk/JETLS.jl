@@ -208,6 +208,78 @@ end
     end
     """)
     @test status["x"] === true
+
+    # A variable declared in the loop body is a fresh binding in every iteration,
+    # so an assignment in an earlier iteration does not reach the use.
+    status = get_undef_status("""
+    function f(c)
+        while true
+            c && return x
+            x = 1
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === true
+
+    # `f(false, true)` leaves the loop after the assignment without the use.
+    status = get_undef_status("""
+    function f(c, d)
+        while true
+            c && return x
+            x = 1
+            d && break
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # `f(false, true)` returns without evaluating `x`.
+    status = get_undef_status("""
+    function f(c, d)
+        while true
+            if c
+                if d || x
+                    return 1
+                end
+            end
+            x = true
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Lowering omits the `newvar` of `x`, since it is assigned before any branch, so
+    # `f(true)` returns 1 from the second iteration.
+    status = get_undef_status("""
+    function f(c)
+        c && @goto init
+        while true
+            return x
+            @label init
+            x = 1
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # No `@goto` in the function can jump to a label in a closure.
+    status = get_undef_status("""
+    function f(c)
+        y = 1
+        cb = () -> begin
+            @label inner
+            y
+        end
+        while true
+            c && return x
+            x = 1
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === true
 end
 
 @testset "for loop" begin
@@ -856,6 +928,28 @@ end
         """)
         @test status["y"] === nothing
     end
+
+    # Unlike `@isdefined`, a correlated condition may not hold, e.g. when a closure
+    # reassigns the condition variable, so it does not make the use strict: `f(false)`
+    # returns 0.
+    let status = get_undef_status("""
+        function func(x)
+            local y
+            setflag = () -> (x = true)
+            while true
+                if x
+                    println(y)
+                    y = 1
+                end
+                setflag()
+                if x
+                    return 0
+                end
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
 end
 
 @testset "closure capture" begin
@@ -947,6 +1041,33 @@ end
         end
         """)
         @test status["y"] === false
+    end
+end
+
+@testset "@isdefined(y) without assignment" begin
+    # `@isdefined(y)` never holds, so every execution returns the undefined `y`.
+    let status = get_undef_status("""
+        function f()
+            local y
+            while true
+                if !(@isdefined(y))
+                    return y
+                end
+            end
+        end
+        """)
+        @test status["y"] === true
+    end
+    let status = get_undef_status("""
+        function f()
+            local y
+            if !(@isdefined(y))
+                return y
+            end
+            return 0
+        end
+        """)
+        @test status["y"] === true
     end
 end
 
@@ -1568,6 +1689,29 @@ end
     end
     """)
     @test status["y"] === false
+
+    # The assignment in the finally body also precedes the use in the same iteration of
+    # the loop declaring `x`.
+    status = get_undef_status("""
+    function f()
+        while true
+            local x
+            try
+                while true
+                    try
+                        break
+                    finally
+                        x = 1
+                    end
+                end
+            catch
+                continue
+            end
+            return x
+        end
+    end
+    """)
+    @test status["x"] === false
 
     # The `@goto` in each copy of the finally body jumps to the `@label` in the same copy,
     # so an exception does not continue to the loop exit.
