@@ -55,6 +55,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed false positive [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) and [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) diagnostics in [script analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/modes/script) for names imported by `Distributed.@everywhere using ...` at top level, or by another macro that expands to a block containing a `:toplevel` expression.
+  Script analysis of such code also no longer crashes on assertion-enabled Julia builds:
+  ```julia
+  using Distributed
+  @everywhere using Base64
+  base64encode("a") # was reported: `base64encode` is not defined
+  ```
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/1074 via https://github.com/aviatesk/JET.jl/pull/918)
+
 - Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables that are assigned in a `try` block and used after its `finally` block:
   ```julia
   function f(g)
