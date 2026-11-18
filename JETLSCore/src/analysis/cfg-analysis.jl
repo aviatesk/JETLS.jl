@@ -76,8 +76,9 @@ mutable struct EventLinearizer
     const pending_gotos::Vector{Tuple{Int,Int}}
     next_label::Int
     # Maps symbolic label names (e.g. "loop-exit", "loop-cont") to CFG label IDs
-    # for handling `:symbolicblock` / `:break` pairs from lowered loops.
-    const break_targets::Dict{String,Int}
+    # for handling `:symbolicblock` / `:break` pairs from lowered loops, together with
+    # the depth of `finally_breaks` at the `:symbolicblock`.
+    const break_targets::Dict{String,Tuple{Int,Int}}
     # Maps `@label name` / `@goto name` label names to CFG label IDs. Unlike
     # `break_targets`, these are not nested — `@label`/`@goto` reference each
     # other across the whole lambda body, and forward references are resolved
@@ -115,12 +116,16 @@ mutable struct EventLinearizer
     # is being linearized. Each is pushed only around its try body, so the innermost entry
     # is where an exception thrown at the current point is caught. Consulted by `:block`.
     const active_handler_labels::Vector{Int}
+    # Stack parallel to `active_finally_labels`: for each `:tryfinally`, the `break_targets`
+    # entries of the `:break`s leaving its try body, each mapped to the label of the copy of
+    # the finally body that they go through.
+    const finally_breaks::Vector{Vector{Pair{Tuple{Int,Int},Int}}}
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
         new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
-            Dict{String,Int}(), Dict{String,Int}(),
+            Dict{String,Tuple{Int,Int}}(), Dict{String,Int}(),
             Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[],
-            StatementRecord[], Int[], Int[])
+            StatementRecord[], Int[], Int[], Vector{Pair{Tuple{Int,Int},Int}}[])
     end
 end
 
@@ -174,6 +179,25 @@ function cfg_emit_gotoifnot!(lin::EventLinearizer, false_label::Int)
     cfg_add_edge!(lin, lin.current_block, true_block)
     push!(lin.pending_gotos, (lin.current_block, false_label))
     cfg_switch_to_block!(lin, true_block)
+end
+
+# Add a jump from the current block to the `break_targets` entry `target`. If it leaves the
+# try body of a `:tryfinally`, the jump goes through its finally body, as lowering does.
+function cfg_add_break_goto!(lin::EventLinearizer, target::Tuple{Int,Int})
+    (exit_label, depth) = target
+    if depth < length(lin.finally_breaks)
+        breaks = last(lin.finally_breaks)
+        i = findfirst(((t, _),) -> t == target, breaks)
+        if isnothing(i)
+            label = cfg_make_label!(lin)
+            push!(breaks, target => label)
+        else
+            label = breaks[i].second
+        end
+        push!(lin.pending_gotos, (lin.current_block, label))
+    else
+        push!(lin.pending_gotos, (lin.current_block, exit_label))
+    end
 end
 
 function cfg_finalize!(lin::EventLinearizer)
@@ -415,7 +439,7 @@ function linearize_cfg_events!(
         exit_label = cfg_make_label!(lin)
         # Save and set the break target for this label (handles nesting)
         outer_target = get(lin.break_targets, label_name, nothing)
-        lin.break_targets[label_name] = exit_label
+        lin.break_targets[label_name] = (exit_label, length(lin.finally_breaks))
         if JS.numchildren(ex3) >= 2
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
         end
@@ -434,9 +458,10 @@ function linearize_cfg_events!(
         # Emit goto to matching symbolicblock exit if label is known
         if JS.numchildren(ex3) >= 1 && JS.head(ex3[1]) == :symboliclabel
             label_name = name_val(ex3[1])
-            target_label = get(lin.break_targets, label_name, nothing)
-            if !isnothing(target_label)
-                cfg_emit_goto!(lin, target_label)
+            target = get(lin.break_targets, label_name, nothing)
+            if !isnothing(target)
+                cfg_add_break_goto!(lin, target)
+                cfg_switch_to_block!(lin, cfg_new_block!(lin))
                 return
             end
         end
@@ -500,10 +525,14 @@ function linearize_cfg_events!(
         if has_outer_capture && JS.numchildren(ex3) >= 4
             skip_label = cfg_make_label!(lin)
             cfg_emit_gotoifnot!(lin, skip_label)
+            # The closure's `@label`s are separate from the enclosing lambda's ones.
+            outer_goto_targets = copy(lin.goto_targets)
+            empty!(lin.goto_targets)
             let saved = undef_save_cond_implied(lin)
                 linearize_cfg_events!(lin, ctx3, ex3[4], candidates, allow_noreturn_optimization)
                 undef_restore_cond_implied!(lin, saved)
             end
+            copy!(lin.goto_targets, outer_goto_targets)
             cfg_emit_label!(lin, skip_label)
         end
 
@@ -629,19 +658,23 @@ function linearize_cfg_events!(
         # — `pop!` happens before linearizing the finally body so a `return` inside
         # `finally` is not redirected back to itself).
         push!(lin.active_finally_labels, return_label)
+        push!(lin.finally_breaks, Pair{Tuple{Int,Int},Int}[])
         push!(lin.active_handler_labels, finally_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
         pop!(lin.active_handler_labels)
+        breaks = pop!(lin.finally_breaks)
         pop!(lin.active_finally_labels)
 
         # Like lowering, linearize the finally body twice, since only the normal completion
         # of the try body continues after the statement. The other copy is entered at
         # `finally_label` by exceptions and at `return_label` by routed `return`s. After it,
         # an exception is rethrown to the enclosing handler and a `return` continues through
-        # the enclosing finally; either leaves the lambda when there is none.
+        # the enclosing finally; either leaves the lambda when there is none. Unlike lowering,
+        # the body is linearized once more for each target of the `break`s leaving the try
+        # body, so that only those `break`s continue to the target.
         saved = undef_save_cond_implied(lin)
         linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
         after_normal = undef_save_cond_implied(lin)
@@ -661,6 +694,13 @@ function linearize_cfg_events!(
             else
                 push!(lin.pending_gotos, (lin.current_block, last(lin.active_finally_labels)))
             end
+        end
+        for (target, label) in breaks
+            copy!(lin.cond_implies_defined, saved)
+            cfg_switch_to_block!(lin, cfg_new_block!(lin))
+            cfg_emit_label!(lin, label)
+            linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+            cfg_add_break_goto!(lin, target)
         end
         cfg_switch_to_block!(lin, cfg_new_block!(lin))
         copy!(lin.cond_implies_defined, after_normal)

@@ -115,6 +115,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables assigned in a `finally` block and used after a `break` or `continue` that leaves its `try` block:
+  ```julia
+  function f()
+      local y
+      while true
+          try
+              break
+          finally
+              y = 1
+          end
+      end
+      return y # was reported as possibly undefined
+  end
+  ```
+  The analyses now take into account that the `finally` block runs before `break` and `continue` take effect, as for `return`.
+
 ## 2026-11-16
 
 - Commit: [`56a6f4a`](https://github.com/aviatesk/JETLS.jl/commit/56a6f4a)
