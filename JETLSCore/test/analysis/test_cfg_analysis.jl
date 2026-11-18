@@ -2202,6 +2202,103 @@ end
     end
 end
 
+@testset "exception at the start of a handler body" begin
+    # If `g()` throws, the outer `catch` is reached with `x = 1`.
+    let ds = get_dead_stores("""
+        function f(g)
+            x = 0
+            try
+                try
+                    x = 1
+                finally
+                    x = g()
+                end
+            catch
+            end
+            return x
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+
+    # Also in the copies of the finally body for `return` and `break`.
+    let ds = get_dead_stores("""
+        function f(g)
+            x = 0
+            try
+                try
+                    return (x = 1)
+                finally
+                    x = g()
+                end
+            catch
+            end
+            return x
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+    let ds = get_dead_stores("""
+        function f(g, done)
+            x = 0
+            try
+                while true
+                    try
+                        if (x = done())
+                            break
+                        else
+                            x = 0
+                        end
+                    finally
+                        x = g()
+                    end
+                end
+            catch
+            end
+            return x
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+
+    let ds = get_dead_stores("""
+        function f(g)
+            x = 0
+            try
+                try
+                    x = 1
+                    error("boom")
+                catch
+                    x = g()
+                end
+            catch
+            end
+            return x
+        end
+        """; allow_noreturn_optimization=[:error])
+        @test !haskey(ds, "x")
+    end
+
+    let ds = get_dead_stores("""
+        function f(g)
+            x = 0
+            try
+                try
+                    x = 1
+                catch
+                    return 0
+                else
+                    x = g()
+                end
+            catch
+            end
+            return x
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+end
+
 @testset "trycatchelse: else runs only after normal try completion" begin
     let ds = get_dead_stores("""
         function f(g)
