@@ -131,6 +131,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   The analyses now take into account that the `finally` block runs before `break` and `continue` take effect, as for `return`.
 
+- Fixed false [`lowering/unused-assignment`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-assignment) reports on assignments in a `try` block that the first statement of its `catch`, `else` or `finally` block overwrites, although their values can still be read if that statement throws and an enclosing `try` catches the exception:
+  ```julia
+  function f(g)
+      x = 0
+      try
+          try
+              x = 1 # was reported as unused
+          finally
+              x = g()
+          end
+      catch
+      end
+      return x
+  end
+  ```
+
 ## 2026-11-16
 
 - Commit: [`56a6f4a`](https://github.com/aviatesk/JETLS.jl/commit/56a6f4a)

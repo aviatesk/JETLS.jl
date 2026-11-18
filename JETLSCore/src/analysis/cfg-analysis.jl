@@ -633,6 +633,7 @@ function linearize_cfg_events!(
         # The `else` block runs only when the try body completes normally, and exceptions
         # thrown from it are not caught by this `catch`.
         if JS.numchildren(ex3) >= 3
+            cfg_emit_exception_edge!(lin)
             let saved = undef_save_cond_implied(lin)
                 linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
                 undef_restore_cond_implied!(lin, saved)
@@ -641,6 +642,7 @@ function linearize_cfg_events!(
         cfg_emit_goto!(lin, end_label)
 
         cfg_emit_label!(lin, catch_label)
+        cfg_emit_exception_edge!(lin)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
@@ -676,6 +678,7 @@ function linearize_cfg_events!(
         # the body is linearized once more for each target of the `break`s leaving the try
         # body, so that only those `break`s continue to the target.
         saved = undef_save_cond_implied(lin)
+        cfg_emit_exception_edge!(lin)
         linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
         after_normal = undef_save_cond_implied(lin)
         cfg_emit_goto!(lin, end_label)
@@ -684,6 +687,7 @@ function linearize_cfg_events!(
         cfg_emit_label!(lin, finally_label)
         lin.label_to_block[return_label] = lin.current_block
         has_return = any(((_, label),) -> label == return_label, lin.pending_gotos)
+        cfg_emit_exception_edge!(lin)
         linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
         if !isempty(lin.active_handler_labels)
             push!(lin.pending_gotos, (lin.current_block, last(lin.active_handler_labels)))
@@ -699,6 +703,7 @@ function linearize_cfg_events!(
             copy!(lin.cond_implies_defined, saved)
             cfg_switch_to_block!(lin, cfg_new_block!(lin))
             cfg_emit_label!(lin, label)
+            cfg_emit_exception_edge!(lin)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             cfg_add_break_goto!(lin, target)
         end
@@ -756,8 +761,9 @@ function linearize_statement!(
     # Inside a `try` body, model "exception thrown between statements escapes
     # to the enclosing handler" by branching to the innermost active catch or
     # finally at every statement boundary. Combined with the entry-bypass
-    # `gotoifnot` of `:trycatchelse` and `:tryfinally`, this covers exception
-    # escape at every point in the try body.
+    # `gotoifnot` of `:trycatchelse` and `:tryfinally`, and the same branch at
+    # the start of their `catch`, `else` and `finally` bodies, this covers
+    # exception escape at every point in the try body.
     cfg_emit_exception_edge!(lin)
 end
 
