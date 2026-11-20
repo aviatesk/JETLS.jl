@@ -82,8 +82,19 @@ throwconditional61048(c, x) = c ? throw(x isa Int) : throw(x isa Float64)
 function issue61048(c::Bool, x)
     throwconditional61048(c, x)
 end
+# Adapted from aviatesk/JET.jl#917: a `MustAlias` of a narrowed field as the exception type
+struct ThrowsAliasedField
+    e::Any
+end
+throws_any(x) = Base.invokelatest(identity, x)
+function throw_aliased_field(k::ThrowsAliasedField)
+    k.e === nothing || throw(k.e)
+    throws_any(k)
+    return 1
+end
 @testset "aviatesk/JETLS#887" begin
     @test isempty(analyze_signature(issue61048))
+    @test isempty(analyze_signature(throw_aliased_field))
 end
 
 # test basic analysis abilities of `LSAnalyzer`

@@ -1339,6 +1339,9 @@ function push_vnode_stack!(vnodes::Vector{VNode}, node::JS.SyntaxNode, newex::Ex
     return vnodes
 end
 
+contains_toplevel(@nospecialize x) =
+    isexpr(x, :toplevel) || (isexpr(x, :block) && any(contains_toplevel, x.args))
+
 function find_module_node(node::JS.SyntaxNode)
     for i in 1:JS.numchildren(node)
         child = node[i]
@@ -1623,6 +1626,12 @@ function process_toplevel!(interp::ConcreteInterpreter, toplevelnode::JS.SyntaxN
             end
         end
 
+        everywhere = desugar_everywhere_macrocall(state, x)
+        if everywhere !== nothing
+            push_vnode_stack!(vnodes, node, everywhere, force_concretize)
+            continue
+        end
+
         x = desugar_main_macrocall(x)
         x = replace_test_macrocalls(x, state.context, state.failfast, state.failfast_modes)
 
@@ -1670,6 +1679,12 @@ function process_toplevel!(interp::ConcreteInterpreter, toplevelnode::JS.SyntaxN
             else
                 push_vnode_stack!(vnodes, node, force_concretize)
             end
+            continue
+        elseif isexpanded && isexpr(x, :block) && any(contains_toplevel, x.args)
+            # Lowering keeps a `:toplevel` within a block as a statement, which is just
+            # evaluated. A top-level block introduces no scope, so its statements can be
+            # analyzed one by one instead, analyzing the code of the `:toplevel` as well.
+            push_vnode_stack!(vnodes, node, x, force_concretize)
             continue
         end
 
@@ -2164,7 +2179,9 @@ function select_direct_requirement!(
         if (LoweredCodeUtils.ismethod(stmt) ||    # don't abstract away method definitions
             LoweredCodeUtils.istypedef(stmt) ||   # don't abstract away type definitions
             LoweredCodeUtils.is_defaultctors_call(stmt) ||
-            (ismoduleusage(stmt) || is_lowered_module_usage(stmt)))
+            (ismoduleusage(stmt) || is_lowered_module_usage(stmt)) ||
+            # nested top-level code, e.g. that a macro called within a block expands to
+            isexpr(stmt, :toplevel))
             selected[idx] = true
             continue
         end
@@ -3079,6 +3096,7 @@ end
 end
 
 function analyze_toplevel!(analyzer::ToplevelAbstractAnalyzer, src::CodeInfo, context_module::Module)
+    src = replace_toplevel_statements(src)
     mi = construct_toplevel_mi(src, context_module)
 
     result = InferenceResult(mi);
@@ -3089,6 +3107,19 @@ function analyze_toplevel!(analyzer::ToplevelAbstractAnalyzer, src::CodeInfo, co
     frame = InferenceState(result, src, #=cache_mode=#:global, analyzer)::InferenceState
 
     return analyze_frame!(analyzer, frame)
+end
+
+# Inference cannot handle `:toplevel` statements, which `ConcreteInterpreter` evaluates
+# instead, so give them values of unknown types in a copy of `src`
+function replace_toplevel_statements(src::CodeInfo)
+    any(@nospecialize(stmt) -> isexpr(stmt, :toplevel), src.code) || return src
+    src = copy(src)
+    for i in eachindex(src.code)
+        if isexpr(src.code[i], :toplevel)
+            src.code[i] = Expr(:call, GlobalRef(Base, :inferencebarrier), nothing)
+        end
+    end
+    return src
 end
 
 function construct_toplevel_mi(src::Core.CodeInfo, context_module::Module)

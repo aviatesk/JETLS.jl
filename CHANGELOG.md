@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`40a5e9c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/40a5e9c...HEAD)
+- Diff: [`56a6f4a...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/56a6f4a...HEAD)
 
 ### Announcement
 
@@ -52,6 +52,123 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Fixed
+
+- Fixed false positive [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) and [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) diagnostics in [script analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/modes/script) for names imported by `Distributed.@everywhere using ...` at top level, or by another macro that expands to a block containing a `:toplevel` expression.
+  Script analysis of such code also no longer crashes on assertion-enabled Julia builds:
+  ```julia
+  using Distributed
+  @everywhere using Base64
+  base64encode("a") # was reported: `base64encode` is not defined
+  ```
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/1074 via https://github.com/aviatesk/JET.jl/pull/918)
+
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables that are assigned in a `try` block and used after its `finally` block:
+  ```julia
+  function f(g)
+      local x
+      try
+          x = g()
+      finally
+          println("cleanup")
+      end
+      return x # was reported as possibly undefined
+  end
+  ```
+  JETLS now treats code after a `try`/`finally` as reached only when the `try` block completes without throwing.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1073)
+
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) warnings ("is used before it is defined") on variables used in a loop before an assignment that an earlier iteration may have run:
+  ```julia
+  function f(c)
+      local x
+      while true
+          c && return x # was reported as used before it is defined
+          x = 1
+          c = true
+      end
+  end
+  ```
+  Such uses are now reported as "may be used before it is defined".
+
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) warnings ("is used before it is defined") on variables used in a later operand of `&&` or `||` in a condition, which is not evaluated on every path:
+  ```julia
+  function f(d)
+      local x
+      if d || x # was reported as used before it is defined
+          return 1
+      end
+      x = true
+      return x
+  end
+  ```
+  Such uses are now reported as "may be used before it is defined".
+
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables used in an operand of `&&` or `||` in a condition after an earlier operand checks them with `@isdefined`:
+  ```julia
+  function f(c)
+      c && (x = 1)
+      if @isdefined(x) && x > 0 # `x > 0` was reported as possibly undefined
+          return x
+      end
+  end
+  ```
+
+- Fixed false [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) reports on variables assigned in a `finally` block and used after a `break` or `continue` that leaves its `try` block:
+  ```julia
+  function f()
+      local y
+      while true
+          try
+              break
+          finally
+              y = 1
+          end
+      end
+      return y # was reported as possibly undefined
+  end
+  ```
+  The analyses now take into account that the `finally` block runs before `break` and `continue` take effect, as for `return`.
+
+- Fixed false [`lowering/unused-assignment`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-assignment) reports on assignments in a `try` block that the first statement of its `catch`, `else` or `finally` block overwrites, although their values can still be read if that statement throws and an enclosing `try` catches the exception:
+  ```julia
+  function f(g)
+      x = 0
+      try
+          try
+              x = 1 # was reported as unused
+          finally
+              x = g()
+          end
+      catch
+      end
+      return x
+  end
+  ```
+
+- Fixed [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) treating a `return` inside a closure as leaving the enclosing function, which made a later use of an unassigned variable reported only as "may be used before it is defined":
+  ```julia
+  function f(xs)
+      local x
+      n = length(xs)
+      foreach(xs) do v
+          v > n && return
+          println(v)
+      end
+      println(x) # now reported as "is used before it is defined"
+      x = 1
+  end
+  ```
+
+## 2026-11-16
+
+- Commit: [`56a6f4a`](https://github.com/aviatesk/JETLS.jl/commit/56a6f4a)
+- Diff: [`40a5e9c...56a6f4a`](https://github.com/aviatesk/JETLS.jl/compare/40a5e9c...56a6f4a)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-11-16")'
+  ```
 
 ### Changed
 
