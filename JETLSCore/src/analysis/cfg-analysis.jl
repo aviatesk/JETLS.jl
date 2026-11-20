@@ -31,10 +31,14 @@
 # because they appear in the returned dicts.
 
 # Per-block variable event recorded on `EventBlock.event`. `kind` is one of
-# `:assign` / `:use` / `:isdefined` (the last is a hint for CFG analysis, not
-# a real def). Using a named struct rather than a `Tuple` keeps the field
-# layout stable for the compiler when stored as an `Union{Nothing, ...}`
-# and avoids per-push tuple boxing in `Vector{...}` containers below.
+# `:assign` / `:use` / `:isdefined` (a hint for CFG analysis, not a real def) /
+# `:implied` (a hint from a correlated condition, which unlike `:isdefined` may
+# be wrong, e.g. when a closure reassigns the condition variable) /
+# `:newvar` (the scope entry of the variable, where it is undefined again, e.g.
+# on every iteration of a loop body declaring it). Using a named struct rather
+# than a `Tuple` keeps the field layout stable for the compiler when stored as
+# an `Union{Nothing, ...}` and avoids per-push tuple boxing in `Vector{...}`
+# containers below.
 struct BlockEvent
     kind::Symbol
     var_id::JL.IdTag
@@ -68,6 +72,8 @@ end
 
 EventBlock(id::Int) = EventBlock(id, Int[], nothing)
 
+const MAX_FINALLY_COPY_DEPTH = 2
+
 mutable struct EventLinearizer
     const blocks::Vector{EventBlock}
     current_block::Int
@@ -76,8 +82,9 @@ mutable struct EventLinearizer
     const pending_gotos::Vector{Tuple{Int,Int}}
     next_label::Int
     # Maps symbolic label names (e.g. "loop-exit", "loop-cont") to CFG label IDs
-    # for handling `:symbolicblock` / `:break` pairs from lowered loops.
-    const break_targets::Dict{String,Int}
+    # for handling `:symbolicblock` / `:break` pairs from lowered loops, together with
+    # the depth of `finally_breaks` at the `:symbolicblock`.
+    const break_targets::Dict{String,Tuple{Int,Int}}
     # Maps `@label name` / `@goto name` label names to CFG label IDs. Unlike
     # `break_targets`, these are not nested — `@label`/`@goto` reference each
     # other across the whole lambda body, and forward references are resolved
@@ -104,23 +111,29 @@ mutable struct EventLinearizer
     # resolved at finalization, even when the preceding fall-through (before_block) is
     # unreachable.
     const statement_blocks::Vector{StatementRecord}
-    # Stack of enclosing `:tryfinally` finally-block label IDs. Pushed before linearizing
-    # the try body and popped before the finally body (so it is empty inside the finally
-    # body itself). Consulted by `:return` so that a return inside `try` routes through
-    # the innermost enclosing finally — modeling the runtime semantics of "finally runs
-    # before the return takes effect" — and an assignment in the try body can correctly
-    # reach a use in the finally body.
-    const active_finally_labels::Vector{Int}
+    # Stack of the label IDs that a `return` jumps to, consulted by `:return`. Each
+    # `:tryfinally` pushes one around its try body, so that a return inside `try` routes
+    # through the innermost enclosing finally — modeling the runtime semantics of "finally
+    # runs before the return takes effect" — and an assignment in the try body can correctly
+    # reach a use in the finally body. An inlined closure pushes the end of its body, since
+    # its `return` only leaves the closure. With none, a `return` leaves the lambda.
+    const return_labels::Vector{Int}
     # Stack of label IDs of the exception handlers (catch or finally blocks) whose try body
     # is being linearized. Each is pushed only around its try body, so the innermost entry
     # is where an exception thrown at the current point is caught. Consulted by `:block`.
     const active_handler_labels::Vector{Int}
+    # Stack with an entry per `:tryfinally` whose try body is being linearized: the
+    # `break_targets` entries of the `:break`s leaving the try body, each mapped to the label
+    # of the copy of the finally body that they go through.
+    const finally_breaks::Vector{Vector{Pair{Tuple{Int,Int},Int}}}
+    # The number of finally bodies being linearized around the current point.
+    finally_depth::Int
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
         new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
-            Dict{String,Int}(), Dict{String,Int}(),
+            Dict{String,Tuple{Int,Int}}(), Dict{String,Int}(),
             Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[],
-            StatementRecord[], Int[], Int[])
+            StatementRecord[], Int[], Int[], Vector{Pair{Tuple{Int,Int},Int}}[], 0)
     end
 end
 
@@ -174,6 +187,25 @@ function cfg_emit_gotoifnot!(lin::EventLinearizer, false_label::Int)
     cfg_add_edge!(lin, lin.current_block, true_block)
     push!(lin.pending_gotos, (lin.current_block, false_label))
     cfg_switch_to_block!(lin, true_block)
+end
+
+# Add a jump from the current block to the `break_targets` entry `target`. If it leaves the
+# try body of a `:tryfinally`, the jump goes through its finally body, as lowering does.
+function cfg_add_break_goto!(lin::EventLinearizer, target::Tuple{Int,Int})
+    (exit_label, depth) = target
+    if depth < length(lin.finally_breaks)
+        breaks = last(lin.finally_breaks)
+        i = findfirst(((t, _),) -> t == target, breaks)
+        if isnothing(i)
+            label = cfg_make_label!(lin)
+            push!(breaks, target => label)
+        else
+            label = breaks[i].second
+        end
+        push!(lin.pending_gotos, (lin.current_block, label))
+    else
+        push!(lin.pending_gotos, (lin.current_block, exit_label))
+    end
 end
 
 function cfg_finalize!(lin::EventLinearizer)
@@ -358,7 +390,7 @@ function undef_invalidate_cond_implies!(lin::EventLinearizer, var_id::JL.IdTag)
     end
 end
 
-# Emit `:isdefined` hints for variables implied by correlated conditions.
+# Emit `:implied` hints for variables implied by correlated conditions.
 # Extracts all BindingId operands asserted true by the condition and checks
 # if any recorded implication key is a subset.
 function undef_emit_cond_implied_hints!(
@@ -378,7 +410,7 @@ function undef_emit_cond_implied_hints!(
         key ⊆ cond_key || continue
         for var_id in implied
             if var_id in candidates
-                cfg_emit_event!(lin, :isdefined, var_id, cond)
+                cfg_emit_event!(lin, :implied, var_id, cond)
             end
         end
     end
@@ -415,7 +447,7 @@ function linearize_cfg_events!(
         exit_label = cfg_make_label!(lin)
         # Save and set the break target for this label (handles nesting)
         outer_target = get(lin.break_targets, label_name, nothing)
-        lin.break_targets[label_name] = exit_label
+        lin.break_targets[label_name] = (exit_label, length(lin.finally_breaks))
         if JS.numchildren(ex3) >= 2
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
         end
@@ -434,9 +466,10 @@ function linearize_cfg_events!(
         # Emit goto to matching symbolicblock exit if label is known
         if JS.numchildren(ex3) >= 1 && JS.head(ex3[1]) == :symboliclabel
             label_name = name_val(ex3[1])
-            target_label = get(lin.break_targets, label_name, nothing)
-            if !isnothing(target_label)
-                cfg_emit_goto!(lin, target_label)
+            target = get(lin.break_targets, label_name, nothing)
+            if !isnothing(target)
+                cfg_add_break_goto!(lin, target)
+                cfg_switch_to_block!(lin, cfg_new_block!(lin))
                 return
             end
         end
@@ -500,15 +533,26 @@ function linearize_cfg_events!(
         if has_outer_capture && JS.numchildren(ex3) >= 4
             skip_label = cfg_make_label!(lin)
             cfg_emit_gotoifnot!(lin, skip_label)
+            push!(lin.return_labels, skip_label)
+            # The closure's `@label`s are separate from the enclosing lambda's ones.
+            outer_goto_targets = copy(lin.goto_targets)
+            empty!(lin.goto_targets)
             let saved = undef_save_cond_implied(lin)
                 linearize_cfg_events!(lin, ctx3, ex3[4], candidates, allow_noreturn_optimization)
                 undef_restore_cond_implied!(lin, saved)
             end
+            copy!(lin.goto_targets, outer_goto_targets)
+            pop!(lin.return_labels)
             cfg_emit_label!(lin, skip_label)
         end
 
     elseif k == :local
-        # local declarations don't use or assign
+        # Scope resolution places these at the start of each scope, so entering the
+        # scope again, e.g. in the next iteration of a loop, makes a fresh binding.
+        if JS.numchildren(ex3) >= 1 && JS.head(ex3[1]) == :bindingid
+            vid = var_id(ex3[1])
+            vid in candidates && cfg_emit_event!(lin, :newvar, vid, ex3)
+        end
 
     elseif k == :decl
         # decl nodes: the BindingId is declaration, not use; only visit type expression
@@ -519,12 +563,10 @@ function linearize_cfg_events!(
     elseif k == :if || k == :elseif
         # if cond then_branch [else_branch]
         cond = ex3[1]
-        linearize_cfg_events!(lin, ctx3, cond, candidates, allow_noreturn_optimization)
-
         end_label = cfg_make_label!(lin)
         else_label = cfg_make_label!(lin)
 
-        cfg_emit_gotoifnot!(lin, else_label)
+        linearize_cond_branch!(lin, ctx3, cond, else_label, candidates, allow_noreturn_optimization)
 
         # Special case: if the condition implies @isdefined(var), the var is
         # definitely defined on that branch. This handles direct
@@ -567,9 +609,8 @@ function linearize_cfg_events!(
 
         cfg_emit_label!(lin, top_label)
         cond = ex3[1]
-        linearize_cfg_events!(lin, ctx3, cond, candidates, allow_noreturn_optimization)
         if !(JS.head(cond) === :value && cond.value === true)
-            cfg_emit_gotoifnot!(lin, end_label)
+            linearize_cond_branch!(lin, ctx3, cond, end_label, candidates, allow_noreturn_optimization)
         end
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
@@ -607,6 +648,7 @@ function linearize_cfg_events!(
         # The `else` block runs only when the try body completes normally, and exceptions
         # thrown from it are not caught by this `catch`.
         if JS.numchildren(ex3) >= 3
+            cfg_emit_exception_edge!(lin)
             let saved = undef_save_cond_implied(lin)
                 linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
                 undef_restore_cond_implied!(lin, saved)
@@ -615,6 +657,7 @@ function linearize_cfg_events!(
         cfg_emit_goto!(lin, end_label)
 
         cfg_emit_label!(lin, catch_label)
+        cfg_emit_exception_edge!(lin)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
@@ -624,78 +667,121 @@ function linearize_cfg_events!(
 
     elseif k == :tryfinally
         finally_label = cfg_make_label!(lin)
+        return_label = cfg_make_label!(lin)
         end_label = cfg_make_label!(lin)
 
         cfg_emit_gotoifnot!(lin, finally_label)
-        # `active_finally_labels` is consulted by `:return` (and only spans the try body
+        # `return_labels` is consulted by `:return` (and only spans the try body
         # — `pop!` happens before linearizing the finally body so a `return` inside
         # `finally` is not redirected back to itself).
-        push!(lin.active_finally_labels, finally_label)
+        push!(lin.return_labels, return_label)
+        push!(lin.finally_breaks, Pair{Tuple{Int,Int},Int}[])
         push!(lin.active_handler_labels, finally_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
         pop!(lin.active_handler_labels)
-        pop!(lin.active_finally_labels)
+        breaks = pop!(lin.finally_breaks)
+        pop!(lin.return_labels)
 
-        # If the try body terminated, post-try is unreachable; the finally body still
-        # runs (modeled via the entry-bypass `gotoifnot` and any `:return`-routed
-        # pending gotos from inside the try body) but its completion does not flow
-        # into post-try. This check is correct even after returns add pending gotos
-        # to `finally_label` because `is_block_reachable_from_entry` only follows
-        # pending gotos to already-resolved labels, and `finally_label` is registered
-        # below by `cfg_emit_label!`.
-        try_body_terminated = !is_block_reachable_from_entry(lin, lin.current_block)
+        # Like lowering, linearize the finally body twice, since only the normal completion
+        # of the try body continues after the statement. The other copy is entered at
+        # `finally_label` by exceptions, which are rethrown to the enclosing handler after
+        # it, or leave the lambda when there is none. Unlike lowering, the body is linearized
+        # once more for the `return`s routed to `return_label`, which continue to the next
+        # label in `return_labels` after it, or leave the lambda when there is none, and for
+        # each target of the `break`s leaving the try body, so that only those `break`s
+        # continue to the target.
+        # The copies multiply with the nesting of `try`/`finally` in finally bodies, so a
+        # finally body nested in `MAX_FINALLY_COPY_DEPTH` others is linearized only once,
+        # entered by every way of leaving the try body and continuing to all of them.
+        separate_copies = lin.finally_depth < MAX_FINALLY_COPY_DEPTH
+        lin.finally_depth += 1
+        saved = undef_save_cond_implied(lin)
+        if separate_copies
+            cfg_emit_exception_edge!(lin)
+            linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+            after_normal = undef_save_cond_implied(lin)
+            cfg_emit_goto!(lin, end_label)
+            copy!(lin.cond_implies_defined, saved)
+        end
 
         cfg_emit_label!(lin, finally_label)
-        linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
-
-        if try_body_terminated
-            end_block = cfg_new_block!(lin)
-            lin.label_to_block[end_label] = end_block
-            cfg_switch_to_block!(lin, end_block)
-        else
-            cfg_emit_label!(lin, end_label)
+        has_return = any(((_, label),) -> label == return_label, lin.pending_gotos)
+        if !separate_copies
+            lin.label_to_block[return_label] = lin.current_block
+            for (_, label) in breaks
+                lin.label_to_block[label] = lin.current_block
+            end
         end
+        cfg_emit_exception_edge!(lin)
+        linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+        if !separate_copies
+            push!(lin.pending_gotos, (lin.current_block, end_label))
+            for (target, _) in breaks
+                cfg_add_break_goto!(lin, target)
+            end
+            if has_return && !isempty(lin.return_labels)
+                push!(lin.pending_gotos, (lin.current_block, last(lin.return_labels)))
+            end
+            # An uncaught exception, or a `return` with no label to continue to, leaves the
+            # lambda, as the end of the separate copy does when nothing follows it.
+            if isempty(lin.active_handler_labels) || (has_return && isempty(lin.return_labels))
+                cfg_add_edge!(lin, lin.current_block, cfg_new_block!(lin))
+            end
+        end
+        if !isempty(lin.active_handler_labels)
+            push!(lin.pending_gotos, (lin.current_block, last(lin.active_handler_labels)))
+        end
+        if separate_copies
+            if has_return
+                copy!(lin.cond_implies_defined, saved)
+                cfg_switch_to_block!(lin, cfg_new_block!(lin))
+                cfg_emit_label!(lin, return_label)
+                cfg_emit_exception_edge!(lin)
+                linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+                if !isempty(lin.return_labels)
+                    push!(lin.pending_gotos, (lin.current_block, last(lin.return_labels)))
+                end
+            end
+            for (target, label) in breaks
+                copy!(lin.cond_implies_defined, saved)
+                cfg_switch_to_block!(lin, cfg_new_block!(lin))
+                cfg_emit_label!(lin, label)
+                cfg_emit_exception_edge!(lin)
+                linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+                cfg_add_break_goto!(lin, target)
+            end
+            copy!(lin.cond_implies_defined, after_normal)
+        end
+        lin.finally_depth -= 1
+        cfg_switch_to_block!(lin, cfg_new_block!(lin))
+
+        cfg_emit_label!(lin, end_label)
 
     elseif k == :return
         if JS.numchildren(ex3) >= 1
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
+            # The value may throw after an assignment in it, which the exception edge after the
+            # statement cannot model, since that point is unreachable.
+            cfg_emit_exception_edge!(lin)
         end
-        if isempty(lin.active_finally_labels)
+        if isempty(lin.return_labels)
             # Same pattern as `cfg_emit_goto!`, no-target `:break`, noreturn-call branch:
             # phantom has no incoming edges, so post-return code is unreachable.
             unreachable = cfg_new_block!(lin)
             cfg_switch_to_block!(lin, unreachable)
         else
             # `return` inside `try` runs the enclosing `finally` first, so route the edge
-            # through it — otherwise an assignment preceding the return looks dead.
-            cfg_emit_goto!(lin, last(lin.active_finally_labels))
+            # through it — otherwise an assignment preceding the return looks dead. In an
+            # inlined closure, it continues after the closure.
+            cfg_emit_goto!(lin, last(lin.return_labels))
         end
 
     elseif k == :block
-        # Record each direct child as a "statement" tagged with both the
-        # block where execution would arrive at the child (before) and the
-        # block execution leaves it in (after). Used by reachability-based
-        # unreachable analysis: a statement is reachable iff EITHER block
-        # is reachable from the entry. Tracking the after-block matters for
-        # forms like `:symboliclabel` whose own block becomes reachable
-        # only via a `:symbolicgoto` edge resolved at finalization, even
-        # though fall-through from the previous statement is unreachable.
         for child in JS.children(ex3)
-            before_block = lin.current_block
-            linearize_cfg_events!(lin, ctx3, child, candidates, allow_noreturn_optimization)
-            after_block = lin.current_block
-            push!(lin.statement_blocks, StatementRecord(before_block, after_block, child))
-            # Inside a `try` body, model "exception thrown between statements escapes
-            # to the enclosing handler" by branching to the innermost active catch or
-            # finally at every statement boundary. Combined with the entry-bypass
-            # `gotoifnot` of `:trycatchelse` and `:tryfinally`, this covers exception
-            # escape at every point in the try body.
-            if !isempty(lin.active_handler_labels)
-                cfg_emit_gotoifnot!(lin, last(lin.active_handler_labels))
-            end
+            linearize_statement!(lin, ctx3, child, candidates, allow_noreturn_optimization)
         end
 
     else # Default: process all children
@@ -708,6 +794,82 @@ function linearize_cfg_events!(
             unreachable = cfg_new_block!(lin)
             cfg_switch_to_block!(lin, unreachable)
         end
+    end
+end
+
+# Linearize a direct child `st` of a `:block`, recording it as a "statement" tagged with both
+# the block where execution would arrive at it (before) and the block execution leaves it
+# in (after). Used by reachability-based unreachable analysis: a statement is reachable iff
+# EITHER block is reachable from the entry. Tracking the after-block matters for forms like
+# `:symboliclabel` whose own block becomes reachable only via a `:symbolicgoto` edge resolved
+# at finalization, even though fall-through from the previous statement is unreachable.
+function linearize_statement!(
+        lin::EventLinearizer, ctx3::JL.VariableAnalysisContext, st::SyntaxTree,
+        candidates::Set{JL.IdTag}, allow_noreturn_optimization::Vector{Symbol}
+    )
+    before_block = lin.current_block
+    linearize_cfg_events!(lin, ctx3, st, candidates, allow_noreturn_optimization)
+    push!(lin.statement_blocks, StatementRecord(before_block, lin.current_block, st))
+    # Inside a `try` body, model "exception thrown between statements escapes
+    # to the enclosing handler" by branching to the innermost active catch or
+    # finally at every statement boundary. Combined with the entry-bypass
+    # `gotoifnot` of `:trycatchelse` and `:tryfinally`, and the same branch at
+    # the start of their `catch`, `else` and `finally` bodies, this covers
+    # exception escape at every point in the try body.
+    cfg_emit_exception_edge!(lin)
+end
+
+function cfg_emit_exception_edge!(lin::EventLinearizer)
+    if !isempty(lin.active_handler_labels)
+        cfg_emit_gotoifnot!(lin, last(lin.active_handler_labels))
+    end
+end
+
+# Linearize the condition `cond` of a branch to `false_label`, continuing where it holds.
+# Like lowering, each operand of `&&` and `||` branches directly, so later operands are
+# evaluated only if the earlier ones do not decide the branch.
+function linearize_cond_branch!(
+        lin::EventLinearizer, ctx3::JL.VariableAnalysisContext, cond::SyntaxTree,
+        false_label::Int, candidates::Set{JL.IdTag}, allow_noreturn_optimization::Vector{Symbol}
+    )
+    k = JS.head(cond)
+    if k == :block && JS.numchildren(cond) >= 1 && JS.head(cond[end]) in (:&&, :||)
+        # The last statement decides the branch.
+        for i in 1:JS.numchildren(cond)-1
+            linearize_statement!(lin, ctx3, cond[i], candidates, allow_noreturn_optimization)
+        end
+        before_block = lin.current_block
+        linearize_cond_branch!(
+            lin, ctx3, cond[end], false_label, candidates, allow_noreturn_optimization)
+        push!(lin.statement_blocks, StatementRecord(before_block, lin.current_block, cond[end]))
+    elseif k == :&&
+        for operand in JS.children(cond)
+            linearize_cfg_events!(lin, ctx3, operand, candidates, allow_noreturn_optimization)
+            cfg_emit_exception_edge!(lin) # as between statements
+            cfg_emit_gotoifnot!(lin, false_label)
+            undef_emit_isdefined_hints!(lin, ctx3, operand, candidates, true)
+        end
+    elseif k == :||
+        true_label = cfg_make_label!(lin)
+        for (i, operand) in enumerate(JS.children(cond))
+            linearize_cfg_events!(lin, ctx3, operand, candidates, allow_noreturn_optimization)
+            cfg_emit_exception_edge!(lin) # as between statements
+            if i < JS.numchildren(cond)
+                next_label = cfg_make_label!(lin)
+                cfg_emit_gotoifnot!(lin, next_label)
+                undef_emit_isdefined_hints!(lin, ctx3, operand, candidates, true)
+                cfg_emit_goto!(lin, true_label)
+                cfg_emit_label!(lin, next_label)
+                undef_emit_isdefined_hints!(lin, ctx3, operand, candidates, false)
+            else
+                cfg_emit_gotoifnot!(lin, false_label)
+                undef_emit_isdefined_hints!(lin, ctx3, operand, candidates, true)
+            end
+        end
+        cfg_emit_label!(lin, true_label)
+    else
+        linearize_cfg_events!(lin, ctx3, cond, candidates, allow_noreturn_optimization)
+        cfg_emit_gotoifnot!(lin, false_label)
     end
 end
 
@@ -736,6 +898,67 @@ function cfg_can_reach_avoiding(
         end
     end
     return false
+end
+
+# Check if an execution from the entry can avoid reaching `use_blocks` while the variable is
+# undefined, i.e. reach an exit, or an assignment after which the variable stays defined,
+# first. Such an execution cannot pass `isdefined_blocks` either. Entering `newvar_blocks`
+# makes the variable undefined again, so it stays defined only outside `renewable`, the
+# blocks that can reach them. Executions that never reach either are not counted, even if
+# they loop forever without the use.
+function cfg_can_avoid_undef_use(
+        blocks::Vector{EventBlock}, use_blocks::BitSet, assign_blocks::BitSet,
+        isdefined_blocks::BitSet, newvar_blocks::BitSet, renewable::BitSet,
+        exit_blocks::BitSet, visited_undef::BitSet, visited_def::BitSet
+    )
+    empty!(visited_undef)
+    empty!(visited_def)
+    worklist = Tuple{Int,Bool}[(1, false)]
+    while !isempty(worklist)
+        block_id, defined = pop!(worklist)
+        if block_id in newvar_blocks
+            defined = false
+        elseif block_id in assign_blocks
+            defined = true
+        end
+        if defined
+            block_id in renewable || return true
+            block_id in visited_def && continue
+            push!(visited_def, block_id)
+        else
+            (block_id in use_blocks || block_id in isdefined_blocks) && continue
+            block_id in exit_blocks && return true
+            block_id in visited_undef && continue
+            push!(visited_undef, block_id)
+        end
+        for succ in blocks[block_id].succs
+            push!(worklist, (succ, defined))
+        end
+    end
+    return false
+end
+
+function cfg_predecessors(blocks::Vector{EventBlock})
+    preds = [Int[] for _ in blocks]
+    for block in blocks, succ in block.succs
+        push!(preds[succ], block.id)
+    end
+    return preds
+end
+
+# Collect into `reaching` the blocks that can reach any block in `targets`.
+function cfg_blocks_reaching!(
+        reaching::BitSet, preds::Vector{Vector{Int}}, targets::BitSet
+    )
+    empty!(reaching)
+    worklist = collect(targets)
+    while !isempty(worklist)
+        block_id = pop!(worklist)
+        block_id in reaching && continue
+        push!(reaching, block_id)
+        append!(worklist, preds[block_id])
+    end
+    return reaching
 end
 
 # Find all use blocks reachable from `start` avoiding `avoid`, sorted by block ID.
@@ -767,17 +990,17 @@ function cfg_reachable_targets(
     return reached
 end
 
-# Check if a block is "must-execute" (all paths from entry pass through it).
-# This is equivalent to: entry cannot reach exit without going through the block.
-# When `exit_blocks` / `visited` are supplied by the caller they are reused
-# across repeated calls for the same CFG, avoiding redundant allocation.
-function cfg_is_must_execute(
-        blocks::Vector{EventBlock}, block_id::Int, exit_blocks::BitSet, visited::BitSet
-    )
-    isempty(exit_blocks) && return true
-    avoid = BitSet([block_id])
-    can_bypass = cfg_can_reach_avoiding(blocks, 1, exit_blocks, avoid, visited)
-    return !can_bypass
+# Group `block_ids` by their event tree, in order of first appearance. An event in a
+# finally body has a block per copy of the body (see `:tryfinally`).
+function group_blocks_by_tree(block_ids, event_trees::Dict{Int,SyntaxTree})
+    groups = Pair{SyntaxTree,BitSet}[]
+    group_index = Dict{SyntaxTree,Int}()
+    for block_id in block_ids
+        i = get!(group_index, event_trees[block_id], length(groups) + 1)
+        i > length(groups) && push!(groups, event_trees[block_id] => BitSet())
+        push!(groups[i].second, block_id)
+    end
+    return groups
 end
 
 # Collect candidate variables captured by any nested closure.  The CFG
@@ -799,39 +1022,6 @@ function collect_closure_captured_vars(body::SyntaxTree, candidates::Set{JL.IdTa
         return nothing
     end
     return result
-end
-
-# On-demand reachability check on the partially-built CFG. Like
-# `compute_reachable_blocks`, but additionally treats `pending_gotos`
-# whose target labels have already been emitted as edges, so it gives a
-# correct answer mid-linearization (before `cfg_finalize!` resolves
-# pending entries into real edges). Used by `:tryfinally` to decide
-# whether the try body fell through.
-function is_block_reachable_from_entry(lin::EventLinearizer, target::Int)
-    target == 1 && return true
-    visited = falses(length(lin.blocks))
-    visited[1] = true
-    stack = Int[1]
-    while !isempty(stack)
-        b = pop!(stack)
-        b == target && return true
-        for s in lin.blocks[b].succs
-            if !visited[s]
-                visited[s] = true
-                push!(stack, s)
-            end
-        end
-        for (from, label_id) in lin.pending_gotos
-            from == b || continue
-            haskey(lin.label_to_block, label_id) || continue
-            to = lin.label_to_block[label_id]
-            if !visited[to]
-                visited[to] = true
-                push!(stack, to)
-            end
-        end
-    end
-    return false
 end
 
 """
@@ -873,7 +1063,7 @@ Fields:
 - `var_events::Dict{JL.IdTag, Vector{VarEvent}}`: per-variable event list indexed by
   `var_id`, avoiding O(blocks × candidates) scans during analysis
 - `exit_blocks::BitSet`: CFG blocks with no successors, used for
-  must-execute queries during undef analysis
+  strict-undef queries during undef analysis
 - `reachable::BitSet`: CFG blocks reachable from the lambda entry
 """
 struct LambdaCFG
@@ -927,7 +1117,7 @@ function build_lambda_cfg(
         push!(evts, VarEvent(evt.kind, block.id, evt.st))
     end
 
-    # Pre-compute exit blocks (no successors) for must-execute checks.
+    # Pre-compute exit blocks (no successors) for strict-undef checks.
     exit_blocks = BitSet()
     for b in lin.blocks
         isempty(b.succs) && push!(exit_blocks, b.id)
@@ -940,13 +1130,18 @@ end
 
 # Reachability-based unreachable-statement detection on a built CFG. Adds to
 # `unreachable_statements` every recorded statement whose entry and exit CFG blocks are
-# both unreachable from the lambda entry.
+# both unreachable from the lambda entry. A statement in a finally body has a record per
+# copy of the body (see `:tryfinally`) and is added only when every copy is unreachable.
 function analyze_unreachable!(
         unreachable_statements::Set{SyntaxTree}, cfg::LambdaCFG
     )
+    is_reachable(rec::StatementRecord) =
+        rec.before_block in cfg.reachable || rec.after_block in cfg.reachable
+    all(is_reachable, cfg.lin.statement_blocks) && return unreachable_statements
+    reachable_statements = Set{SyntaxTree}(
+        rec.st for rec in cfg.lin.statement_blocks if is_reachable(rec))
     for rec in cfg.lin.statement_blocks
-        (rec.before_block in cfg.reachable || rec.after_block in cfg.reachable) && continue
-        push!(unreachable_statements, rec.st)
+        rec.st in reachable_statements || push!(unreachable_statements, rec.st)
     end
     return unreachable_statements
 end
@@ -993,6 +1188,12 @@ function analyze_local_def_use!(
     isempty(cfg.candidates) && return
 
     visited = BitSet()
+    visited_def = BitSet()
+    renewable = BitSet()
+    preds = nothing
+    # Lowering omits the `newvar` of a variable assigned before any branch, which only a
+    # `@goto` into its scope can observe, so `:newvar`s are ignored in lambdas with labels.
+    ignore_newvars = !isempty(cfg.lin.goto_targets)
     for var_id in cfg.candidates
         binfo = JL.get_binding(ctx3, var_id)
 
@@ -1003,8 +1204,9 @@ function analyze_local_def_use!(
         end
 
         defs = SyntaxTree[]
-        assign_blocks = BitSet()       # for undef (includes :isdefined)
-        real_assign_blocks = BitSet()  # for dead store (only :assign)
+        assign_blocks = BitSet()       # includes :isdefined and :implied
+        real_assign_blocks = BitSet()  # only :assign
+        newvar_blocks = BitSet()
         use_blocks = BitSet()
         event_trees = Dict{Int,SyntaxTree}()
         for evt in evts
@@ -1013,28 +1215,41 @@ function analyze_local_def_use!(
                 push!(defs, evt.st)
                 push!(assign_blocks, evt.block_id)
                 push!(real_assign_blocks, evt.block_id)
-            elseif evt.kind === :isdefined
+            elseif evt.kind === :isdefined || evt.kind === :implied
                 push!(assign_blocks, evt.block_id)
+            elseif evt.kind === :newvar
+                ignore_newvars || push!(newvar_blocks, evt.block_id)
             else # :use
                 push!(use_blocks, evt.block_id)
             end
         end
+        length(defs) > 1 && unique!(defs) # copies in finally bodies
 
         # --- Undef analysis ---
         if isempty(use_blocks)
             undef_info[binfo] = UndefInfo(defs, Pair{Bool,SyntaxTree}[])
         elseif isempty(assign_blocks)
-            undef_uses = Pair{Bool,SyntaxTree}[true => event_trees[ub] for ub in use_blocks]
+            undef_uses = Pair{Bool,SyntaxTree}[
+                true => use_tree for use_tree in unique(event_trees[ub] for ub in use_blocks)]
             undef_info[binfo] = UndefInfo(defs, undef_uses)
         else
             reached = cfg_reachable_targets(cfg.lin.blocks, 1, use_blocks, assign_blocks, visited)
             if !isempty(reached)
-                min_assign_block = minimum(assign_blocks)
+                if isnothing(preds)
+                    preds = cfg_predecessors(cfg.lin.blocks)
+                end
+                cfg_blocks_reaching!(renewable, preds, newvar_blocks)
+                # An execution passes an `:isdefined` hint only after a real assignment.
+                isdefined_blocks = BitSet(
+                    evt.block_id for evt in evts if evt.kind === :isdefined)
                 undef_uses = Pair{Bool,SyntaxTree}[]
-                for ub in reached
-                    is_strict = ub < min_assign_block &&
-                                cfg_is_must_execute(cfg.lin.blocks, ub, cfg.exit_blocks, visited)
-                    push!(undef_uses, is_strict => event_trees[ub])
+                for (use_tree, ubs) in group_blocks_by_tree(reached, event_trees)
+                    # Strict if every execution reaches the use while the variable is
+                    # undefined.
+                    is_strict = !cfg_can_avoid_undef_use(
+                        cfg.lin.blocks, ubs, real_assign_blocks, isdefined_blocks,
+                        newvar_blocks, renewable, cfg.exit_blocks, visited, visited_def)
+                    push!(undef_uses, is_strict => use_tree)
                 end
                 undef_info[binfo] = UndefInfo(defs, undef_uses)
             else
@@ -1049,17 +1264,21 @@ function analyze_local_def_use!(
         end
         dead_defs = SyntaxTree[]
         other_assigns = BitSet()
-        for def_block_id in real_assign_blocks
-            def_block_id in cfg.reachable || continue
-            empty!(other_assigns)
-            for ab in real_assign_blocks
-                ab != def_block_id && push!(other_assigns, ab)
+        reachable_def_blocks = Iterators.filter(in(cfg.reachable), real_assign_blocks)
+        for (def_tree, def_block_ids) in group_blocks_by_tree(reachable_def_blocks, event_trees)
+            is_dead = true
+            for def_block_id in def_block_ids
+                empty!(other_assigns)
+                for ab in real_assign_blocks
+                    ab != def_block_id && push!(other_assigns, ab)
+                end
+                if cfg_can_reach_avoiding(
+                        cfg.lin.blocks, def_block_id, use_blocks, other_assigns, visited)
+                    is_dead = false
+                    break
+                end
             end
-            can_reach_use = cfg_can_reach_avoiding(
-                cfg.lin.blocks, def_block_id, use_blocks, other_assigns, visited)
-            if !can_reach_use
-                push!(dead_defs, event_trees[def_block_id])
-            end
+            is_dead && push!(dead_defs, def_tree)
         end
         if !isempty(dead_defs)
             dead_store_info[binfo] = DeadStoreInfo(dead_defs)

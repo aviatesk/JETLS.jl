@@ -166,6 +166,122 @@ end
     @test status["y"] === false
 end
 
+@testset "loop back edge before a use" begin
+    # `f(false)` assigns `x` in the first iteration and returns it in the second.
+    status = get_undef_status("""
+    function f(c)
+        local x
+        while true
+            c && return x
+            x = 1
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # An unreachable assignment does not change that.
+    status = get_undef_status("""
+    function f(c)
+        local x
+        while true
+            break
+            x = 0
+        end
+        while true
+            c && return x
+            x = 1
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Every execution reaches the use in the first iteration before the assignment.
+    status = get_undef_status("""
+    function f()
+        local x
+        while true
+            println(x)
+            x = 1
+        end
+    end
+    """)
+    @test status["x"] === true
+
+    # A variable declared in the loop body is a fresh binding in every iteration,
+    # so an assignment in an earlier iteration does not reach the use.
+    status = get_undef_status("""
+    function f(c)
+        while true
+            c && return x
+            x = 1
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === true
+
+    # `f(false, true)` leaves the loop after the assignment without the use.
+    status = get_undef_status("""
+    function f(c, d)
+        while true
+            c && return x
+            x = 1
+            d && break
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # `f(false, true)` returns without evaluating `x`.
+    status = get_undef_status("""
+    function f(c, d)
+        while true
+            if c
+                if d || x
+                    return 1
+                end
+            end
+            x = true
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Lowering omits the `newvar` of `x`, since it is assigned before any branch, so
+    # `f(true)` returns 1 from the second iteration.
+    status = get_undef_status("""
+    function f(c)
+        c && @goto init
+        while true
+            return x
+            @label init
+            x = 1
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # No `@goto` in the function can jump to a label in a closure.
+    status = get_undef_status("""
+    function f(c)
+        y = 1
+        cb = () -> begin
+            @label inner
+            y
+        end
+        while true
+            c && return x
+            x = 1
+            c = true
+        end
+    end
+    """)
+    @test status["x"] === true
+end
+
 @testset "for loop" begin
     # Loop may not execute (empty range) - may be undefined
     status = get_undef_status("""
@@ -268,6 +384,92 @@ end
     status = get_undef_status("""
     function f()
         y = 1
+    end
+    """)
+    @test status["y"] === false
+end
+
+@testset "short-circuit operand in a condition" begin
+    # `f(true)` returns without evaluating `x`.
+    status = get_undef_status("""
+    function f(d)
+        local x
+        if d || x
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === nothing
+
+    status = get_undef_status("""
+    function f(d)
+        local x
+        while d && x
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Also when the condition is a block ending in `||` or `&&`.
+    status = get_undef_status("""
+    function f(d)
+        local x
+        if (nothing; d || x)
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === nothing
+
+    status = get_undef_status("""
+    function f(d)
+        local x
+        while (nothing; d && x)
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Every execution evaluates the first operand.
+    status = get_undef_status("""
+    function f(d)
+        local x
+        if x || d
+            return 1
+        end
+        x = true
+        return x
+    end
+    """)
+    @test status["x"] === true
+
+    # Only the executions evaluating every operand of `&&` take the true branch.
+    status = get_undef_status("""
+    function f(c, g)
+        if c && (y = g()) !== nothing
+            return y
+        end
+    end
+    """)
+    @test status["y"] === false
+
+    # Likewise for the false branch of `||`.
+    status = get_undef_status("""
+    function f(c, g)
+        if c || (y = g()) === nothing
+            return nothing
+        end
+        return y
     end
     """)
     @test status["y"] === false
@@ -726,6 +928,28 @@ end
         """)
         @test status["y"] === nothing
     end
+
+    # Unlike `@isdefined`, a correlated condition may not hold, e.g. when a closure
+    # reassigns the condition variable, so it does not make the use strict: `f(false)`
+    # returns 0.
+    let status = get_undef_status("""
+        function func(x)
+            local y
+            setflag = () -> (x = true)
+            while true
+                if x
+                    println(y)
+                    y = 1
+                end
+                setflag()
+                if x
+                    return 0
+                end
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
 end
 
 @testset "closure capture" begin
@@ -820,6 +1044,33 @@ end
     end
 end
 
+@testset "@isdefined(y) without assignment" begin
+    # `@isdefined(y)` never holds, so every execution returns the undefined `y`.
+    let status = get_undef_status("""
+        function f()
+            local y
+            while true
+                if !(@isdefined(y))
+                    return y
+                end
+            end
+        end
+        """)
+        @test status["y"] === true
+    end
+    let status = get_undef_status("""
+        function f()
+            local y
+            if !(@isdefined(y))
+                return y
+            end
+            return 0
+        end
+        """)
+        @test status["y"] === true
+    end
+end
+
 @testset "if cond && @isdefined(y) - use inside true branch" begin
     let status = get_undef_status("""
         function f(x)
@@ -845,6 +1096,69 @@ end
         end
         """)
         @test status["y"] === false
+    end
+end
+
+@testset "@isdefined(y) in an earlier operand of a condition" begin
+    let status = get_undef_status("""
+        function f(x)
+            if x > 0
+                y = 42
+            end
+            if @isdefined(y) && y > 0
+                return y
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+    let status = get_undef_status("""
+        function f(x)
+            if x > 0
+                y = 42
+            end
+            while @isdefined(y) && y > 0
+                y -= 1
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+    let status = get_undef_status("""
+        function f(x)
+            if x > 0
+                y = 42
+            end
+            if !(@isdefined(y)) || y === nothing
+                return nothing
+            end
+            return y
+        end
+        """)
+        @test status["y"] === false
+    end
+    # The true branch is taken either when `y` is defined or after the assignment.
+    let status = get_undef_status("""
+        function f(c::Bool)
+            if @isdefined(y) || (y = c)
+            end
+            return y
+        end
+        """)
+        @test status["y"] === false
+    end
+    # `c` takes the true branch without `@isdefined(y)`.
+    let status = get_undef_status("""
+        function f(x, c)
+            if x > 0
+                y = 42
+            end
+            if c || @isdefined(y)
+                return y
+            end
+        end
+        """)
+        @test status["y"] === nothing
     end
 end
 
@@ -878,6 +1192,139 @@ end
     end
     """)
     @test status["y"] === nothing
+end
+
+@testset "`return` in a closure" begin
+    # The `return` only leaves the closure, so every execution reaches the use.
+    status = get_undef_status("""
+    function f(g)
+        local x
+        y = 1
+        g(() -> (return y))
+        println(x)
+        x = 1
+    end
+    """)
+    @test status["x"] === true
+
+    # Nor does it leave the function through an enclosing `finally`.
+    status = get_undef_status("""
+    function f(g)
+        local x
+        y = 1
+        try
+            try
+                g(() -> (return y))
+            finally
+                cleanup()
+            end
+        catch
+        end
+        println(x)
+        x = 1
+    end
+    """)
+    @test status["x"] === true
+
+    # An exception through a `finally` in the closure still leaves the function.
+    status = get_undef_status("""
+    function f(h)
+        local x
+        y = 1
+        cb = () -> begin
+            try
+                h()
+                return y
+            finally
+                nothing
+            end
+        end
+        cb()
+        println(x)
+        x = 1
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Nor does it continue after the closure, so `x` is never assigned at the use.
+    status = get_undef_status("""
+    function f(stop, readnext)
+        while true
+            local x
+            try
+                cb = () -> try
+                    stop && return
+                    while true
+                        x = readnext()
+                    end
+                finally
+                    nothing
+                end
+                cb()
+            catch
+                continue
+            end
+            return x
+        end
+    end
+    """)
+    @test status["x"] === true
+
+    # A `return` through the `finally` does, carrying the assignment in it to the use.
+    status = get_undef_status("""
+    function f()
+        while true
+            local x
+            try
+                cb = () -> try
+                    return
+                finally
+                    x = 1
+                end
+                cb()
+            catch
+                continue
+            end
+            return x
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Evaluating the value of a `return` may throw after an assignment in it, so `x` may be
+    # defined when the exception leaves the function.
+    status = get_undef_status("""
+    function f(read)
+        while true
+            local x
+            (() -> try
+                return (x = read()) + 1
+            finally
+                if !@isdefined(x)
+                    return x
+                end
+            end)()
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # The outer `@goto` does not jump to the closure's label of the same name.
+    status = get_undef_status("""
+    function f(jump)
+        y = 1
+        jump && @goto init
+        @label init
+        x = 42
+        cb = () -> begin
+            @label init
+            return y
+        end
+        cb()
+        return x
+    end
+    """)
+    @test status["x"] === false
 end
 
 @testset "generator expression" begin
@@ -1119,12 +1566,9 @@ end
 @testset "tryfinally with terminating try body" begin
     # When the try body always terminates (e.g. `return`), post-try is
     # unreachable: any use of a local there should NOT be flagged as
-    # potentially undefined, since that use never executes. Without
-    # `:tryfinally`'s special handling for a terminated try body, the
-    # use would be reachable via the gotoifnot bypass through finally,
-    # making the post-try use look reachable from the entry on a path
-    # that misses the try-body assignment, and `x` would surface as
-    # `nothing` (potentially undef) — a false positive.
+    # potentially undefined, since that use never executes. The finally
+    # body entered from the exception path or the `return` must not fall
+    # through to post-try.
     let status = get_undef_status("""
         function f()
             local x
@@ -1155,25 +1599,378 @@ end
         """)
         @test status["x"] === false
     end
+end
 
-    # Sanity check that the regular tryfinally case (try body doesn't
-    # terminate) still tracks definedness through the gotoifnot bypass:
-    # if the only assignment is in the try body, the use post-try might
-    # not have executed when control reached finally via the exception
-    # path, so x stays `nothing` (potentially undef).
+@testset "tryfinally: only normal completion continues after finally" begin
+    # aviatesk/JETLS.jl#1073: an exception from the try body runs the
+    # finally body and is rethrown, so a use after the statement always
+    # sees the try-body assignment.
     let status = get_undef_status("""
-        function f()
+        function f(g)
             local x
             try
-                x = compute()
+                x = g()
+            finally
+                println("cleanup")
+            end
+            return x
+        end
+        """)
+        @test status["x"] === false
+    end
+
+    # The finally body itself still runs on the exception path.
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                x = g()
+            finally
+                println(x)
+            end
+        end
+        """)
+        @test status["x"] === nothing
+    end
+
+    # A `return` in the try body leaves the function after the finally body.
+    let status = get_undef_status("""
+        function f(g, c)
+            local x
+            try
+                c && return nothing
+                x = g()
             finally
                 cleanup()
             end
             return x
         end
         """)
+        @test status["x"] === false
+    end
+
+    # An exception rethrown after an inner finally body reaches the outer
+    # `catch`, but not the code after the inner `try`.
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                try
+                    x = g()
+                finally
+                    cleanup()
+                end
+                println(x)
+            catch
+            end
+        end
+        """)
+        @test status["x"] === false
+    end
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                try
+                    x = g()
+                finally
+                    cleanup()
+                end
+            catch
+                println(x)
+            end
+        end
+        """)
         @test status["x"] === nothing
     end
+
+    # A `return` through an inner finally body leaves the function even when
+    # an outer `catch` exists, so the use after it is not always reached.
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                try
+                    return g()
+                finally
+                    cleanup()
+                end
+            catch
+            end
+            println(x)
+            x = 1
+        end
+        """)
+        @test status["x"] === nothing
+    end
+    # Without a `return`, the outer `catch` always continues to the use.
+    let status = get_undef_status("""
+        function f(g)
+            local x
+            try
+                try
+                    g()
+                finally
+                    cleanup()
+                end
+            catch
+            end
+            println(x)
+            x = 1
+        end
+        """)
+        @test status["x"] === true
+    end
+
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                step()
+            finally
+                println(x)
+                x = 1
+            end
+        end
+        """)
+        @test status["x"] === true
+    end
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                return 0
+            finally
+                println(x)
+                x = 1
+            end
+        end
+        """)
+        @test status["x"] === true
+    end
+
+    # Correlated conditions recorded in the finally body still apply after it.
+    let status = get_undef_status("""
+        function f(c)
+            local y
+            try
+                step()
+            finally
+                if c
+                    y = 1
+                end
+            end
+            if c
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+end
+
+@testset "`break` through finally" begin
+    # The finally body runs before the loop is left.
+    status = get_undef_status("""
+    function f()
+        local y
+        while true
+            try
+                break
+            finally
+                y = 1
+            end
+        end
+        return y
+    end
+    """)
+    @test status["y"] === false
+
+    # Exceptions going through the finally body do not continue to the target.
+    status = get_undef_status("""
+    function f()
+        local y
+        while true
+            try
+                y = 1
+                break
+            finally
+                nothing
+            end
+        end
+        return y
+    end
+    """)
+    @test status["y"] === false
+
+    # The finally bodies of all `try`s left run before the loop is left.
+    status = get_undef_status("""
+    function f()
+        local y
+        while true
+            try
+                try
+                    break
+                finally
+                    nothing
+                end
+            finally
+                y = 1
+            end
+        end
+        return y
+    end
+    """)
+    @test status["y"] === false
+
+    # The assignment in the finally body also precedes the use in the same iteration of
+    # the loop declaring `x`.
+    status = get_undef_status("""
+    function f()
+        while true
+            local x
+            try
+                while true
+                    try
+                        break
+                    finally
+                        x = 1
+                    end
+                end
+            catch
+                continue
+            end
+            return x
+        end
+    end
+    """)
+    @test status["x"] === false
+
+    # The `@goto` in each copy of the finally body jumps to the `@label` in the same copy,
+    # so an exception does not continue to the loop exit.
+    status = get_undef_status("""
+    function f()
+        local x
+        z = 1
+        while true
+            try
+                x = 1
+                break
+            finally
+                (() -> begin
+                    @goto done
+                    @label done
+                    z
+                end)()
+            end
+        end
+        return x
+    end
+    """)
+    @test status["x"] === false
+end
+
+@testset "deeply nested finally bodies" begin
+    # An exception through a finally body linearized only once may still leave the lambda.
+    status = get_undef_status("""
+    function f(g)
+        local x
+        try
+        finally
+            try
+            finally
+                try
+                    g()
+                finally
+                    nothing
+                end
+                println(x)
+                x = 1
+            end
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # So does a `return` through it, even when an outer `catch` exists.
+    status = get_undef_status("""
+    function f(g)
+        local x
+        try
+        finally
+            try
+            finally
+                try
+                    try
+                        return g()
+                    finally
+                        cleanup()
+                    end
+                catch
+                end
+                println(x)
+                x = 1
+            end
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # A `return` in an inlined closure through it continues after the closure.
+    status = get_undef_status("""
+    function f()
+        try
+        finally
+            try
+            finally
+                while true
+                    local x
+                    try
+                        cb = () -> begin
+                            try
+                                return
+                            finally
+                                x = 1
+                            end
+                            while true end
+                        end
+                        cb()
+                    catch
+                        continue
+                    end
+                    return x
+                end
+            end
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # The copies of finally bodies multiply only up to `MAX_FINALLY_COPY_DEPTH` levels of
+    # nesting: the innermost finally body is copied for the normal completion, exceptions,
+    # `return`, `continue` and `break` of only the outermost two levels.
+    function count_copies(n::Int)
+        body = "println(y)"
+        for _ = 1:n
+            body = "try; x == 0 && return; x > 0 && continue; x < 0 && break; finally; $body; end"
+        end
+        st0 = jlparse("function f(xs); y = 0; for x in xs; $body; end; end";
+            rule=:statement, filename=@__FILE__)
+        (; ctx3, st3) = JETLSCore.jl_lower_for_scope_resolution(
+            lowering_module, Base.get_world_counter(), st0;
+            trim_error_nodes=false, recover_from_macro_errors=false)
+        lambda_st3 = @something JETLSCore.traverse(st3) do st::JETLSCore.SyntaxTree
+            JS.head(st) === :lambda || return nothing
+            return JETLSCore.TraversalReturn(st; terminate=true)
+        end error("no lambda is found")
+        cfg = @something JETLSCore.build_lambda_cfg(ctx3, lambda_st3) error("no CFG is built")
+        return count(cfg.lin.blocks) do block::JETLSCore.EventBlock
+            event = block.event
+            !isnothing(event) && event.kind === :use &&
+                JL.get_binding(ctx3, event.var_id).name == "y"
+        end
+    end
+    @test [count_copies(n) for n in 1:4] == [5, 25, 25, 25]
 end
 
 @testset "@something short-circuit control flow" begin
@@ -1292,6 +2089,41 @@ end
     end
     """)
     @test !haskey(ds, "z")
+end
+
+@testset "exception after a short-circuit operand" begin
+    # `f(() -> error())` returns 1.
+    ds = get_dead_stores("""
+    function f(g)
+        x = 0
+        try
+            if (x = 1) == 1 && g()
+                x = 2
+            else
+                x = 3
+            end
+        catch
+        end
+        return x
+    end
+    """)
+    @test !haskey(ds, "x")
+
+    ds = get_dead_stores("""
+    function f(g)
+        x = 0
+        try
+            if (nothing; (x = 1) == 1 && g())
+                x = 2
+            else
+                x = 3
+            end
+        catch
+        end
+        return x
+    end
+    """)
+    @test !haskey(ds, "x")
 end
 
 @testset "multiple dead stores" begin
@@ -1586,6 +2418,30 @@ end
         @test !haskey(ds, "x")
     end
 
+    # A `return` continues through the outer finally even when an exception
+    # from the inner finally would be caught by a `catch` in between.
+    let ds = get_dead_stores("""
+        function f(g)
+            local x
+            try
+                try
+                    try
+                        x = g()
+                        return nothing
+                    finally
+                        cleanup()
+                    end
+                catch
+                    x = nothing
+                end
+            finally
+                println(x)
+            end
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+
     # Sanity: a `return` outside any tryfinally still kills the
     # preceding assignment (no finally to flow through). The use after
     # `return` is unreachable, so the assignment cannot reach it.
@@ -1637,6 +2493,24 @@ end
         end
         """)
         @test ds["x"] == 1
+    end
+end
+
+@testset "tryfinally: only normal completion continues after finally" begin
+    # The assignment is dead on the exception path, but the normal
+    # completion reaches the use after the statement.
+    let ds = get_dead_stores("""
+        function f()
+            local x
+            try
+                step()
+            finally
+                x = 1
+            end
+            return x
+        end
+        """)
+        @test !haskey(ds, "x")
     end
 end
 
@@ -1702,6 +2576,103 @@ end
             catch
                 println(x)
             end
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+end
+
+@testset "exception at the start of a handler body" begin
+    # If `g()` throws, the outer `catch` is reached with `x = 1`.
+    let ds = get_dead_stores("""
+        function f(g)
+            x = 0
+            try
+                try
+                    x = 1
+                finally
+                    x = g()
+                end
+            catch
+            end
+            return x
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+
+    # Also in the copies of the finally body for `return` and `break`.
+    let ds = get_dead_stores("""
+        function f(g)
+            x = 0
+            try
+                try
+                    return (x = 1)
+                finally
+                    x = g()
+                end
+            catch
+            end
+            return x
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+    let ds = get_dead_stores("""
+        function f(g, done)
+            x = 0
+            try
+                while true
+                    try
+                        if (x = done())
+                            break
+                        else
+                            x = 0
+                        end
+                    finally
+                        x = g()
+                    end
+                end
+            catch
+            end
+            return x
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+
+    let ds = get_dead_stores("""
+        function f(g)
+            x = 0
+            try
+                try
+                    x = 1
+                    error("boom")
+                catch
+                    x = g()
+                end
+            catch
+            end
+            return x
+        end
+        """; allow_noreturn_optimization=[:error])
+        @test !haskey(ds, "x")
+    end
+
+    let ds = get_dead_stores("""
+        function f(g)
+            x = 0
+            try
+                try
+                    x = 1
+                catch
+                    return 0
+                else
+                    x = g()
+                end
+            catch
+            end
+            return x
         end
         """)
         @test !haskey(ds, "x")
@@ -2055,6 +3026,18 @@ end
         """)
         @test "x = 2" in urs
     end
+    # The finally body still runs after the `return`.
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            finally
+                cleanup()
+            end
+        end
+        """)
+        @test isempty(urs)
+    end
     let urs = get_unreachable_statements("""
         function f()
             try
@@ -2141,8 +3124,8 @@ end
 
     # Both try and catch terminate, finally falls through. The inner
     # `:trycatchelse`'s end-block has no incoming edge from any reachable
-    # block, and `:tryfinally`'s on-demand reachability check picks that
-    # up, so post-try is detected as unreachable.
+    # block, so the finally body copy that continues to post-try is
+    # unreachable as well.
     let urs = get_unreachable_statements("""
         function f()
             try
@@ -2231,6 +3214,23 @@ end
         end
         """)
         @test urs == ["x = 2"]
+    end
+end
+
+@testset "`break` through a finally body that returns" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            while true
+                try
+                    break
+                finally
+                    return 1
+                end
+            end
+            cleanup()
+        end
+        """)
+        @test urs == ["cleanup()"]
     end
 end
 
