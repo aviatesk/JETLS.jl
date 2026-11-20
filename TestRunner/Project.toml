@@ -19,64 +19,40 @@ JSON3 = "00ac8d46-747e-5902-8e12-fdfc767369c7"
 BaseSyntax = "bfd32023-066c-5f76-8dc3-939c60a69aeb"
 
 [sources.JuliaSyntax]
-subdir = "vendor/JuliaSyntax"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/JuliaSyntax"
 
 [sources.Compiler]
-subdir = "vendor/Compiler"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/Compiler"
 
 [sources.CodeTracking]
-subdir = "vendor/CodeTracking"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/CodeTracking"
 
 [sources.MacroTools]
-subdir = "vendor/MacroTools"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/MacroTools"
 
 [sources.LoweredCodeUtils]
-subdir = "vendor/LoweredCodeUtils"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/LoweredCodeUtils"
 
 [sources.Preferences]
-subdir = "vendor/Preferences"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/Preferences"
 
 [sources.PrecompileTools]
-subdir = "vendor/PrecompileTools"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/PrecompileTools"
 
 [sources.JuliaInterpreter]
-subdir = "vendor/JuliaInterpreter"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/JuliaInterpreter"
 
 [sources.StructTypes]
-subdir = "vendor/StructTypes"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/StructTypes"
 
 [sources.Parsers]
-subdir = "vendor/Parsers"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/Parsers"
 
 [sources.JSON3]
-subdir = "vendor/JSON3"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/JSON3"
 
 [sources.BaseSyntax]
-subdir = "vendor/BaseSyntax"
-rev = "fba7c8b0332bc19aa2046502c40a21986b1560eb"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../vendor/BaseSyntax"
 
 [compat]
 Compiler = "0.1"

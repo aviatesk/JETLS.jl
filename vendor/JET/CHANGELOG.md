@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- links start -->
 [Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.13.1...HEAD
+[0.13.3]: https://github.com/aviatesk/JET.jl/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/aviatesk/JET.jl/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/aviatesk/JET.jl/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/aviatesk/JET.jl/compare/v0.12.3...v0.13.0
@@ -66,6 +67,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- links end -->
 
 ## [Unreleased]
+
+### Fixed
+
+- Fixed top-level analysis ignoring a `:toplevel` expression within a block
+  that a macro expands to, as `Distributed.@everywhere using Foo` does, or
+  within a block such as `if` or `@testset` in which such a macro is called.
+  Names imported by such code were reported as not defined, and the analysis
+  crashed on Julia builds with assertions enabled (aviatesk/JETLS.jl#1074):
+  ```julia
+  using Distributed
+  @everywhere using Base64
+  base64encode("a") # was reported: `base64encode` is not defined
+  ```
+
+- Fixed top-level analysis reporting the functions, types and global variables
+  defined with `Distributed.@everywhere` as not defined
+  (aviatesk/JETLS.jl#1075). The code given to a top-level `@everywhere` call is
+  now analyzed in place of the call, so errors within it are reported too:
+  ```julia
+  using Distributed
+  @everywhere f() = 1
+  f() # was reported: `f` is not defined
+  ```
+
+## [0.13.3]
+
+### Fixed
+
+- Fixed an internal error on Julia versions before 1.14 when analyzing a
+  function that checks a field and then throws it, and afterwards makes a call
+  that may throw any exception. `report_call` threw a `MethodError`
+  (`no method matching ⊑(::JLTypeLattice, ::MustAlias, ::Type{Any})`), and
+  `report_package` and `test_package` skipped such functions with an
+  "Error analyzing method signature" log, leaving them unanalyzed:
+  ```julia
+  struct K; e::Any; end
+  function k(x::K)
+      x.e === nothing || throw(x.e)
+      maythrow(x)
+      return 1
+  end
+  report_call(k, (K,)) # used to throw the `MethodError`
+  ```
 
 ## [0.13.2]
 

@@ -626,6 +626,141 @@ end
         foo = @invokelatest vmod.foo
         @test isconcrete(res, foo, :bar)
     end
+
+    # aviatesk/JETLS.jl#1074: a `:toplevel` within a block, as `Distributed.@everywhere` makes
+    let res = @analyze_toplevel begin
+            module Issue1074
+            export issue1074
+            issue1074() = 1074
+            end
+            macro using_issue1074()
+                return Expr(:block, Expr(:toplevel, :(using .Issue1074)), :(issue1074()))
+            end
+            @using_issue1074
+            issue1074()
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+    let res = @analyze_toplevel begin
+            macro nested_toplevel()
+                return Expr(:block, Expr(:block, Expr(:toplevel, :(using Test))), nothing)
+            end
+            @nested_toplevel
+            @test true
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+end
+
+# a `:toplevel` that remains in lowered code, e.g. from a macro called within a block
+@testset "`:toplevel` statements" begin
+    let res = @analyze_toplevel begin
+            macro using_test()
+                return Expr(:block, Expr(:toplevel, :(using Test)), nothing)
+            end
+            if true
+                @using_test
+            end
+            @test true
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
+    let res = @analyze_toplevel begin
+            module M
+            export m
+            m() = 1
+            end
+            macro using_m()
+                return Expr(:block, Expr(:toplevel, :(using .M)), nothing)
+            end
+            using Test
+            @testset "x" begin
+                @using_m
+                m()
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
+    # the value of the statement is unknown to inference
+    let res = @analyze_toplevel begin
+            macro define_f()
+                return Expr(:block, Expr(:toplevel, esc(:(f() = 1))))
+            end
+            let g = @define_f
+                g()
+            end
+            f()
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+end
+
+# aviatesk/JETLS.jl#1075
+@testset "`Distributed.@everywhere`" begin
+    let res = @analyze_toplevel begin
+            using Distributed
+            @everywhere f() = 1
+            @everywhere struct S end
+            @everywhere global x = 1
+            @everywhere using Test
+            f(), S(), x
+            @test true
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
+    # the code is analyzed, not just evaluated
+    let res = @analyze_toplevel begin
+            using Distributed
+            @everywhere undefined_procs() g() = undefined_global
+            g()
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test length(res.res.inference_error_reports) == 2
+        @test all(r -> r isa UndefVarErrorReport, res.res.inference_error_reports)
+        @test Set(r.var.name for r in res.res.inference_error_reports) == Set((:undefined_procs, :undefined_global))
+    end
+
+    # the imports run first, so the code can use the macros they import
+    let res = @analyze_toplevel begin
+            using Distributed
+            @everywhere begin
+                using Test
+                @test true
+            end
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
+    # interpolations from the calling scope, but not those of nested quotes
+    let res = @analyze_toplevel begin
+            import Distributed
+            Distributed.@everywhere Distributed.procs() h(x) = $sin(x)
+            Distributed.@everywhere q(y) = :($y)
+            h(1.0), sum(q(1))
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+
+    # other macros of the same name are expanded as usual
+    let res = @analyze_toplevel begin
+            macro everywhere(ex) nothing end
+            @everywhere f() = 1
+            f()
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test only(res.res.inference_error_reports) isa UndefVarErrorReport
+    end
 end
 
 @testset "lowering error" begin
