@@ -219,7 +219,7 @@ function report_lowering_bug(@nospecialize err)
         catch
             # `showerror` of an internal `JL.LoweringError` may throw while printing the
             # invalid trees it reports
-            err isa JL.LoweringError ? join(err.msgs, '\n') : string(typeof(err))
+            err isa JL.LoweringError ? err.msg : string(typeof(err))
         end
         @warn "Unexpected error in lowering: $errmsg"
         locked_show_backtrace(stderr, bt)

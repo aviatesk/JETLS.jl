@@ -2627,11 +2627,11 @@ function per_stmt_diagnostics!(
             err = err.error
         end
         if err isa JL.LoweringError && !err.internal
-            for (st, msg) in zip(err.sts, err.msgs)
+            for (st, note) in zip(err.sts, err.msgs)
                 push!(diagnostics, Diagnostic(;
                     range = jsobj_to_range(st, fi),
                     severity = DiagnosticSeverity.Error,
-                    message = msg,
+                    message = note === nothing ? err.msg : err.msg * "\n" * note,
                     source = DIAGNOSTIC_SOURCE_LIVE,
                     code = LOWERING_ERROR_CODE,
                     codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
