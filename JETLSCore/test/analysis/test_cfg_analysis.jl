@@ -1737,6 +1737,55 @@ end
     @test status["x"] === false
 end
 
+@testset "deeply nested finally bodies" begin
+    # An exception through a finally body linearized only once may still leave the lambda.
+    status = get_undef_status("""
+    function f(g)
+        local x
+        try
+        finally
+            try
+            finally
+                try
+                    g()
+                finally
+                    nothing
+                end
+                println(x)
+                x = 1
+            end
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # The copies of finally bodies multiply only up to `MAX_FINALLY_COPY_DEPTH` levels of
+    # nesting: the innermost finally body is copied for the normal completion, exceptions,
+    # `continue` and `break` of only the outermost two levels.
+    function count_copies(n::Int)
+        body = "println(y)"
+        for _ = 1:n
+            body = "try; x > 0 && continue; x < 0 && break; finally; $body; end"
+        end
+        st0 = jlparse("function f(xs); y = 0; for x in xs; $body; end; end";
+            rule=:statement, filename=@__FILE__)
+        (; ctx3, st3) = JETLSCore.jl_lower_for_scope_resolution(
+            lowering_module, Base.get_world_counter(), st0;
+            trim_error_nodes=false, recover_from_macro_errors=false)
+        lambda_st3 = @something JETLSCore.traverse(st3) do st::JETLSCore.SyntaxTree
+            JS.head(st) === :lambda || return nothing
+            return JETLSCore.TraversalReturn(st; terminate=true)
+        end error("no lambda is found")
+        cfg = @something JETLSCore.build_lambda_cfg(ctx3, lambda_st3) error("no CFG is built")
+        return count(cfg.lin.blocks) do block::JETLSCore.EventBlock
+            event = block.event
+            !isnothing(event) && event.kind === :use &&
+                JL.get_binding(ctx3, event.var_id).name == "y"
+        end
+    end
+    @test [count_copies(n) for n in 1:4] == [4, 16, 16, 16]
+end
+
 @testset "@something short-circuit control flow" begin
     # `@something(a, b)` only evaluates `b` when `a` is `nothing`. An
     # assignment that lives inside a later argument is therefore conditional,

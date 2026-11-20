@@ -72,6 +72,8 @@ end
 
 EventBlock(id::Int) = EventBlock(id, Int[], nothing)
 
+const MAX_FINALLY_COPY_DEPTH = 2
+
 mutable struct EventLinearizer
     const blocks::Vector{EventBlock}
     current_block::Int
@@ -124,12 +126,14 @@ mutable struct EventLinearizer
     # entries of the `:break`s leaving its try body, each mapped to the label of the copy of
     # the finally body that they go through.
     const finally_breaks::Vector{Vector{Pair{Tuple{Int,Int},Int}}}
+    # The number of finally bodies being linearized around the current point.
+    finally_depth::Int
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
         new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
             Dict{String,Tuple{Int,Int}}(), Dict{String,Int}(),
             Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[],
-            StatementRecord[], Int[], Int[], Vector{Pair{Tuple{Int,Int},Int}}[])
+            StatementRecord[], Int[], Int[], Vector{Pair{Tuple{Int,Int},Int}}[], 0)
     end
 end
 
@@ -686,20 +690,42 @@ function linearize_cfg_events!(
         # the enclosing finally; either leaves the lambda when there is none. Unlike lowering,
         # the body is linearized once more for each target of the `break`s leaving the try
         # body, so that only those `break`s continue to the target.
+        # The copies multiply with the nesting of `try`/`finally` in finally bodies, so a
+        # finally body nested in `MAX_FINALLY_COPY_DEPTH` others is linearized only once,
+        # entered by every way of leaving the try body and continuing to all of them.
+        separate_copies = lin.finally_depth < MAX_FINALLY_COPY_DEPTH
+        lin.finally_depth += 1
         saved = undef_save_cond_implied(lin)
-        cfg_emit_exception_edge!(lin)
-        linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
-        after_normal = undef_save_cond_implied(lin)
-        cfg_emit_goto!(lin, end_label)
+        if separate_copies
+            cfg_emit_exception_edge!(lin)
+            linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+            after_normal = undef_save_cond_implied(lin)
+            cfg_emit_goto!(lin, end_label)
+            copy!(lin.cond_implies_defined, saved)
+        end
 
-        copy!(lin.cond_implies_defined, saved)
         cfg_emit_label!(lin, finally_label)
         lin.label_to_block[return_label] = lin.current_block
         has_return = any(((_, label),) -> label == return_label, lin.pending_gotos)
+        if !separate_copies
+            for (_, label) in breaks
+                lin.label_to_block[label] = lin.current_block
+            end
+        end
         cfg_emit_exception_edge!(lin)
         linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+        if !separate_copies
+            push!(lin.pending_gotos, (lin.current_block, end_label))
+            for (target, _) in breaks
+                cfg_add_break_goto!(lin, target)
+            end
+        end
         if !isempty(lin.active_handler_labels)
             push!(lin.pending_gotos, (lin.current_block, last(lin.active_handler_labels)))
+        elseif !separate_copies
+            # An uncaught exception leaves the lambda, as the end of the separate copy does
+            # when nothing follows it.
+            cfg_add_edge!(lin, lin.current_block, cfg_new_block!(lin))
         end
         if has_return
             if isempty(lin.active_finally_labels)
@@ -708,16 +734,19 @@ function linearize_cfg_events!(
                 push!(lin.pending_gotos, (lin.current_block, last(lin.active_finally_labels)))
             end
         end
-        for (target, label) in breaks
-            copy!(lin.cond_implies_defined, saved)
-            cfg_switch_to_block!(lin, cfg_new_block!(lin))
-            cfg_emit_label!(lin, label)
-            cfg_emit_exception_edge!(lin)
-            linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
-            cfg_add_break_goto!(lin, target)
+        if separate_copies
+            for (target, label) in breaks
+                copy!(lin.cond_implies_defined, saved)
+                cfg_switch_to_block!(lin, cfg_new_block!(lin))
+                cfg_emit_label!(lin, label)
+                cfg_emit_exception_edge!(lin)
+                linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+                cfg_add_break_goto!(lin, target)
+            end
+            copy!(lin.cond_implies_defined, after_normal)
         end
+        lin.finally_depth -= 1
         cfg_switch_to_block!(lin, cfg_new_block!(lin))
-        copy!(lin.cond_implies_defined, after_normal)
 
         cfg_emit_label!(lin, end_label)
 
