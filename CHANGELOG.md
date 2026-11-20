@@ -147,6 +147,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
+- Fixed [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) treating a `return` inside a closure as leaving the enclosing function, which made a later use of an unassigned variable reported only as "may be used before it is defined":
+  ```julia
+  function f(xs)
+      local x
+      n = length(xs)
+      foreach(xs) do v
+          v > n && return
+          println(v)
+      end
+      println(x) # now reported as "is used before it is defined"
+      x = 1
+  end
+  ```
+
 ## 2026-11-16
 
 - Commit: [`56a6f4a`](https://github.com/aviatesk/JETLS.jl/commit/56a6f4a)
