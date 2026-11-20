@@ -1194,6 +1194,139 @@ end
     @test status["y"] === nothing
 end
 
+@testset "`return` in a closure" begin
+    # The `return` only leaves the closure, so every execution reaches the use.
+    status = get_undef_status("""
+    function f(g)
+        local x
+        y = 1
+        g(() -> (return y))
+        println(x)
+        x = 1
+    end
+    """)
+    @test status["x"] === true
+
+    # Nor does it leave the function through an enclosing `finally`.
+    status = get_undef_status("""
+    function f(g)
+        local x
+        y = 1
+        try
+            try
+                g(() -> (return y))
+            finally
+                cleanup()
+            end
+        catch
+        end
+        println(x)
+        x = 1
+    end
+    """)
+    @test status["x"] === true
+
+    # An exception through a `finally` in the closure still leaves the function.
+    status = get_undef_status("""
+    function f(h)
+        local x
+        y = 1
+        cb = () -> begin
+            try
+                h()
+                return y
+            finally
+                nothing
+            end
+        end
+        cb()
+        println(x)
+        x = 1
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Nor does it continue after the closure, so `x` is never assigned at the use.
+    status = get_undef_status("""
+    function f(stop, readnext)
+        while true
+            local x
+            try
+                cb = () -> try
+                    stop && return
+                    while true
+                        x = readnext()
+                    end
+                finally
+                    nothing
+                end
+                cb()
+            catch
+                continue
+            end
+            return x
+        end
+    end
+    """)
+    @test status["x"] === true
+
+    # A `return` through the `finally` does, carrying the assignment in it to the use.
+    status = get_undef_status("""
+    function f()
+        while true
+            local x
+            try
+                cb = () -> try
+                    return
+                finally
+                    x = 1
+                end
+                cb()
+            catch
+                continue
+            end
+            return x
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # Evaluating the value of a `return` may throw after an assignment in it, so `x` may be
+    # defined when the exception leaves the function.
+    status = get_undef_status("""
+    function f(read)
+        while true
+            local x
+            (() -> try
+                return (x = read()) + 1
+            finally
+                if !@isdefined(x)
+                    return x
+                end
+            end)()
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # The outer `@goto` does not jump to the closure's label of the same name.
+    status = get_undef_status("""
+    function f(jump)
+        y = 1
+        jump && @goto init
+        @label init
+        x = 42
+        cb = () -> begin
+            @label init
+            return y
+        end
+        cb()
+        return x
+    end
+    """)
+    @test status["x"] === false
+end
+
 @testset "generator expression" begin
     # Variable assigned before generator
     status = get_undef_status("""
@@ -1759,13 +1892,67 @@ end
     """)
     @test status["x"] === nothing
 
+    # So does a `return` through it, even when an outer `catch` exists.
+    status = get_undef_status("""
+    function f(g)
+        local x
+        try
+        finally
+            try
+            finally
+                try
+                    try
+                        return g()
+                    finally
+                        cleanup()
+                    end
+                catch
+                end
+                println(x)
+                x = 1
+            end
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
+    # A `return` in an inlined closure through it continues after the closure.
+    status = get_undef_status("""
+    function f()
+        try
+        finally
+            try
+            finally
+                while true
+                    local x
+                    try
+                        cb = () -> begin
+                            try
+                                return
+                            finally
+                                x = 1
+                            end
+                            while true end
+                        end
+                        cb()
+                    catch
+                        continue
+                    end
+                    return x
+                end
+            end
+        end
+    end
+    """)
+    @test status["x"] === nothing
+
     # The copies of finally bodies multiply only up to `MAX_FINALLY_COPY_DEPTH` levels of
     # nesting: the innermost finally body is copied for the normal completion, exceptions,
-    # `continue` and `break` of only the outermost two levels.
+    # `return`, `continue` and `break` of only the outermost two levels.
     function count_copies(n::Int)
         body = "println(y)"
         for _ = 1:n
-            body = "try; x > 0 && continue; x < 0 && break; finally; $body; end"
+            body = "try; x == 0 && return; x > 0 && continue; x < 0 && break; finally; $body; end"
         end
         st0 = jlparse("function f(xs); y = 0; for x in xs; $body; end; end";
             rule=:statement, filename=@__FILE__)
@@ -1783,7 +1970,7 @@ end
                 JL.get_binding(ctx3, event.var_id).name == "y"
         end
     end
-    @test [count_copies(n) for n in 1:4] == [4, 16, 16, 16]
+    @test [count_copies(n) for n in 1:4] == [5, 25, 25, 25]
 end
 
 @testset "@something short-circuit control flow" begin

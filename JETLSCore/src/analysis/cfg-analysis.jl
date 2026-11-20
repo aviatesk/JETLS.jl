@@ -111,20 +111,20 @@ mutable struct EventLinearizer
     # resolved at finalization, even when the preceding fall-through (before_block) is
     # unreachable.
     const statement_blocks::Vector{StatementRecord}
-    # Stack of the label IDs that a `return` in the try body of each enclosing `:tryfinally`
-    # jumps to. Pushed before linearizing the try body and popped before the finally body
-    # (so it is empty inside the finally body itself). Consulted by `:return` so that a
-    # return inside `try` routes through the innermost enclosing finally — modeling the
-    # runtime semantics of "finally runs before the return takes effect" — and an
-    # assignment in the try body can correctly reach a use in the finally body.
-    const active_finally_labels::Vector{Int}
+    # Stack of the label IDs that a `return` jumps to, consulted by `:return`. Each
+    # `:tryfinally` pushes one around its try body, so that a return inside `try` routes
+    # through the innermost enclosing finally — modeling the runtime semantics of "finally
+    # runs before the return takes effect" — and an assignment in the try body can correctly
+    # reach a use in the finally body. An inlined closure pushes the end of its body, since
+    # its `return` only leaves the closure. With none, a `return` leaves the lambda.
+    const return_labels::Vector{Int}
     # Stack of label IDs of the exception handlers (catch or finally blocks) whose try body
     # is being linearized. Each is pushed only around its try body, so the innermost entry
     # is where an exception thrown at the current point is caught. Consulted by `:block`.
     const active_handler_labels::Vector{Int}
-    # Stack parallel to `active_finally_labels`: for each `:tryfinally`, the `break_targets`
-    # entries of the `:break`s leaving its try body, each mapped to the label of the copy of
-    # the finally body that they go through.
+    # Stack with an entry per `:tryfinally` whose try body is being linearized: the
+    # `break_targets` entries of the `:break`s leaving the try body, each mapped to the label
+    # of the copy of the finally body that they go through.
     const finally_breaks::Vector{Vector{Pair{Tuple{Int,Int},Int}}}
     # The number of finally bodies being linearized around the current point.
     finally_depth::Int
@@ -533,6 +533,7 @@ function linearize_cfg_events!(
         if has_outer_capture && JS.numchildren(ex3) >= 4
             skip_label = cfg_make_label!(lin)
             cfg_emit_gotoifnot!(lin, skip_label)
+            push!(lin.return_labels, skip_label)
             # The closure's `@label`s are separate from the enclosing lambda's ones.
             outer_goto_targets = copy(lin.goto_targets)
             empty!(lin.goto_targets)
@@ -541,6 +542,7 @@ function linearize_cfg_events!(
                 undef_restore_cond_implied!(lin, saved)
             end
             copy!(lin.goto_targets, outer_goto_targets)
+            pop!(lin.return_labels)
             cfg_emit_label!(lin, skip_label)
         end
 
@@ -669,10 +671,10 @@ function linearize_cfg_events!(
         end_label = cfg_make_label!(lin)
 
         cfg_emit_gotoifnot!(lin, finally_label)
-        # `active_finally_labels` is consulted by `:return` (and only spans the try body
+        # `return_labels` is consulted by `:return` (and only spans the try body
         # — `pop!` happens before linearizing the finally body so a `return` inside
         # `finally` is not redirected back to itself).
-        push!(lin.active_finally_labels, return_label)
+        push!(lin.return_labels, return_label)
         push!(lin.finally_breaks, Pair{Tuple{Int,Int},Int}[])
         push!(lin.active_handler_labels, finally_label)
         let saved = undef_save_cond_implied(lin)
@@ -681,15 +683,16 @@ function linearize_cfg_events!(
         end
         pop!(lin.active_handler_labels)
         breaks = pop!(lin.finally_breaks)
-        pop!(lin.active_finally_labels)
+        pop!(lin.return_labels)
 
         # Like lowering, linearize the finally body twice, since only the normal completion
         # of the try body continues after the statement. The other copy is entered at
-        # `finally_label` by exceptions and at `return_label` by routed `return`s. After it,
-        # an exception is rethrown to the enclosing handler and a `return` continues through
-        # the enclosing finally; either leaves the lambda when there is none. Unlike lowering,
-        # the body is linearized once more for each target of the `break`s leaving the try
-        # body, so that only those `break`s continue to the target.
+        # `finally_label` by exceptions, which are rethrown to the enclosing handler after
+        # it, or leave the lambda when there is none. Unlike lowering, the body is linearized
+        # once more for the `return`s routed to `return_label`, which continue to the next
+        # label in `return_labels` after it, or leave the lambda when there is none, and for
+        # each target of the `break`s leaving the try body, so that only those `break`s
+        # continue to the target.
         # The copies multiply with the nesting of `try`/`finally` in finally bodies, so a
         # finally body nested in `MAX_FINALLY_COPY_DEPTH` others is linearized only once,
         # entered by every way of leaving the try body and continuing to all of them.
@@ -705,9 +708,9 @@ function linearize_cfg_events!(
         end
 
         cfg_emit_label!(lin, finally_label)
-        lin.label_to_block[return_label] = lin.current_block
         has_return = any(((_, label),) -> label == return_label, lin.pending_gotos)
         if !separate_copies
+            lin.label_to_block[return_label] = lin.current_block
             for (_, label) in breaks
                 lin.label_to_block[label] = lin.current_block
             end
@@ -719,22 +722,29 @@ function linearize_cfg_events!(
             for (target, _) in breaks
                 cfg_add_break_goto!(lin, target)
             end
+            if has_return && !isempty(lin.return_labels)
+                push!(lin.pending_gotos, (lin.current_block, last(lin.return_labels)))
+            end
+            # An uncaught exception, or a `return` with no label to continue to, leaves the
+            # lambda, as the end of the separate copy does when nothing follows it.
+            if isempty(lin.active_handler_labels) || (has_return && isempty(lin.return_labels))
+                cfg_add_edge!(lin, lin.current_block, cfg_new_block!(lin))
+            end
         end
         if !isempty(lin.active_handler_labels)
             push!(lin.pending_gotos, (lin.current_block, last(lin.active_handler_labels)))
-        elseif !separate_copies
-            # An uncaught exception leaves the lambda, as the end of the separate copy does
-            # when nothing follows it.
-            cfg_add_edge!(lin, lin.current_block, cfg_new_block!(lin))
-        end
-        if has_return
-            if isempty(lin.active_finally_labels)
-                cfg_add_edge!(lin, lin.current_block, cfg_new_block!(lin))
-            else
-                push!(lin.pending_gotos, (lin.current_block, last(lin.active_finally_labels)))
-            end
         end
         if separate_copies
+            if has_return
+                copy!(lin.cond_implies_defined, saved)
+                cfg_switch_to_block!(lin, cfg_new_block!(lin))
+                cfg_emit_label!(lin, return_label)
+                cfg_emit_exception_edge!(lin)
+                linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
+                if !isempty(lin.return_labels)
+                    push!(lin.pending_gotos, (lin.current_block, last(lin.return_labels)))
+                end
+            end
             for (target, label) in breaks
                 copy!(lin.cond_implies_defined, saved)
                 cfg_switch_to_block!(lin, cfg_new_block!(lin))
@@ -753,16 +763,20 @@ function linearize_cfg_events!(
     elseif k == :return
         if JS.numchildren(ex3) >= 1
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
+            # The value may throw after an assignment in it, which the exception edge after the
+            # statement cannot model, since that point is unreachable.
+            cfg_emit_exception_edge!(lin)
         end
-        if isempty(lin.active_finally_labels)
+        if isempty(lin.return_labels)
             # Same pattern as `cfg_emit_goto!`, no-target `:break`, noreturn-call branch:
             # phantom has no incoming edges, so post-return code is unreachable.
             unreachable = cfg_new_block!(lin)
             cfg_switch_to_block!(lin, unreachable)
         else
             # `return` inside `try` runs the enclosing `finally` first, so route the edge
-            # through it — otherwise an assignment preceding the return looks dead.
-            cfg_emit_goto!(lin, last(lin.active_finally_labels))
+            # through it — otherwise an assignment preceding the return looks dead. In an
+            # inlined closure, it continues after the closure.
+            cfg_emit_goto!(lin, last(lin.return_labels))
         end
 
     elseif k == :block
