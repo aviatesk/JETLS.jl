@@ -211,6 +211,43 @@ end
     end
 end
 
+@testset "code run natively reading a constant (aviatesk/JETLS#1081)" begin
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        result = JET.analyze_and_report_text!(interp, """
+            const N = 1
+            macro m() N end
+            f() = (@m) + 1
+            """; analyze_from_definitions=true)
+        @test isnothing(result.res.toplevel_error_report)
+        @test isempty(get_reports(result))
+    end
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        result = JET.analyze_and_report_text!(interp, """
+            const M = Base.Meta
+            using .M: isexpr
+            g() = isexpr(:(x()), :call)
+            """; analyze_from_definitions=true)
+        @test isnothing(result.res.toplevel_error_report)
+        @test isempty(get_reports(result))
+    end
+end
+
+@testset "references to `Main` in a script (aviatesk/JETLS#1084)" begin
+    let analyzer = LSAnalyzer(; report_target_modules=nothing)
+        interp = JET.JETConcreteInterpreter(analyzer)
+        result = JET.analyze_and_report_text!(interp, """
+            global y1084 = 1
+            Main.y1084
+            f() = Main.y1084
+            f()
+            """; analyze_from_definitions=true)
+        @test isnothing(result.res.toplevel_error_report)
+        @test isempty(get_reports(result))
+    end
+end
+
 @testset "concretized call reports" begin
     let analyzer = LSAnalyzer(; report_target_modules=nothing)
         interp = JET.JETConcreteInterpreter(analyzer)
