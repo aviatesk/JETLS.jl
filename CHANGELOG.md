@@ -65,6 +65,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   (Closed https://github.com/aviatesk/JETLS.jl/issues/1086)
 
+- Fixed false diagnostics in [script analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/modes/script) when a macro reads a top-level `const` whose value JETLS can infer:
+  ```julia
+  const N = 1
+  macro m() N end
+  f() = (@m) + 1 # was reported as `inference/method-error`
+  ```
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/1081 via https://github.com/aviatesk/JET.jl/pull/922)
+
+- Fixed false [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) reports in [script analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/modes/script) on globals referenced as `Main.x`:
+  ```julia
+  global y = 1
+  Main.y # was reported
+  ```
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/1084 via https://github.com/aviatesk/JET.jl/pull/921)
+
 ## 2026-11-20
 
 - Commit: [`8dbcea0`](https://github.com/aviatesk/JETLS.jl/commit/8dbcea0)
