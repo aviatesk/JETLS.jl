@@ -53,6 +53,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Fixed
+
+- Fixed false [`inference/type-error/type-assert`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/type-assert) reports on type assertions to `Union{}`, which were reported as if `Union{}` were not a type.
+  Such assertions are no longer reported, since they are a way to tell inference that a code path does not return:
+  ```julia
+  function Base.getproperty(s::S, f::Symbol)
+      f === :x && return Int(getfield(s, :x))
+      getfield(s, f)::Union{} # was reported
+  end
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1086)
+
 ## 2026-11-20
 
 - Commit: [`8dbcea0`](https://github.com/aviatesk/JETLS.jl/commit/8dbcea0)

@@ -1934,7 +1934,9 @@ end
 
 This diagnostic is reported when inference can prove that the asserted value's
 inferred type has no overlap with the asserted type. Type assertions that may
-succeed for some runtime values are not reported.
+succeed for some runtime values are not reported. Type assertions to
+`Union{}`, such as `getfield(x, name)::Union{}`, are not reported either, since
+they are a way to tell inference that a code path does not return.
 
 ##### [Non-boolean condition (`inference/type-error/non-bool-cond`)](@id diagnostic/reference/inference/type-error/non-bool-cond)
 
