@@ -231,6 +231,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`syntax/parse-warning`](@ref diagnostic/reference/syntax/parse-warning)                                       | `Warning`             | `JETLS/live`  | Syntax warnings detected by JuliaSyntax.jl             |
 | [`lowering/error`](@ref diagnostic/reference/lowering/error)                                                   | `Error`               | `JETLS/live`  | General lowering errors                                |
 | [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)                   | `Error/Warning`       | `JETLS/live`  | Issues detected during macro expansion                 |
+| [`lowering/internal-error`](@ref diagnostic/reference/lowering/internal-error)                                 | `Information`         | `JETLS/live`  | Internal lowering errors, possibly from invalid code   |
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)                             | `Warning`             | `JETLS/live`  | References to undefined global variables               |
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                               | `Warning/Information` | `JETLS/live`  | References to undefined local variables                |
 | [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)                     | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable     |
@@ -374,6 +375,39 @@ Threads.@spawn :badname body
 
 @testset verbose=true verbose=false begin end
 ```
+
+#### [Internal lowering error (`lowering/internal-error`)](@id diagnostic/reference/lowering/internal-error)
+
+**Default severity**: `Information`
+
+Lowering a top-level statement failed with an internal error of
+JuliaLowering.jl or JETLS, rather than with an error describing a problem in
+the code. JETLS then cannot report most lowering diagnostics for the
+statement, such as
+[`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)
+and [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local),
+and this diagnostic tells you why they are missing.
+
+Such an error is often caused by invalid code that JuliaLowering.jl does not
+report properly yet. For example, JuliaLowering.jl currently fails this way on
+a method named `_`:
+
+```julia
+_(x) = x
+```
+
+The diagnostic is shown at the code the error points to, or at the first line
+of the statement when it points to none. In editors that render diagnostic
+messages as Markdown, the message also includes the full error in a code
+block.
+
+This diagnostic always indicates a bug, even if the code is invalid, since
+JuliaLowering.jl should then report the problem in the code instead. Please
+report it at the
+[JETLS.jl issue tracker](https://github.com/aviatesk/JETLS.jl/issues), along
+with the full error if available, after checking that it has not been reported
+yet. The full error includes the file path and the code around the error, so
+remove anything you cannot share publicly.
 
 #### [Undefined global variable (`lowering/undef-global-var`)](@id diagnostic/reference/lowering/undef-global-var)
 

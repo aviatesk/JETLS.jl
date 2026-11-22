@@ -53,6 +53,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Added
+
+- Added the [`lowering/internal-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/internal-error) diagnostic, reported with `Information` severity when lowering a statement fails with an internal error of JuliaLowering.jl or JETLS.
+  Most lowering diagnostics for such a statement, e.g. for undefined or unused variables, were silently missing before.
+  Such an error is often caused by invalid code that JuliaLowering.jl does not report properly yet, e.g. a method named `_`:
+  ```julia
+  _(x) = x # now reported at `_`: `expected identifier or BindingId`
+  ```
+  Internal errors during macro expansion, previously reported as [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error), are now reported as this diagnostic too.
+
 ### Changed
 
 - [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics on syntax errors that a macro reports in its arguments are now shown at the offending argument instead of the whole macro call, and their messages no longer include a copy of the source code:
