@@ -160,6 +160,8 @@ function _jl_lower_for_scope_resolution(
         soft_scope::Bool = false,
     )
     ctx2, st2 = JL.expand_forms_2(st1, world)
+    # `JL.expand_doc` calls the undefined `JL.TODO`, so `st2` is inferred as `Any`
+    st2 = st2::SyntaxTree
     ctx3, st3 = JL.resolve_scopes(ctx2, st2, false, soft_scope)
     convert_closures || return (; st0, st1, st2, st3, ctx3)
     ctx4, st4 = JL.convert_closures(ctx3, st3)
