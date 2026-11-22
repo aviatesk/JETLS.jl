@@ -1,7 +1,7 @@
 module test_string
 
 using Test
-using JETLSCore: JETLSCore, apply_text_change, encoded_length, offset_to_xy, xy_to_offset
+using JETLSCore: JETLSCore, apply_text_change, offset_to_xy, xy_to_offset
 using JETLSCore.LSP
 using JETLSCore.LSP.PositionEncodingKind: UTF16, UTF32, UTF8
 
@@ -495,29 +495,6 @@ end
         range = Range(; start=Position(; line=0, character=3), var"end"=Position(; line=0, character=4))
         @test apply_text_change(text, range, "e", UTF16) == "cafe"
     end
-end
-
-@testset "encoded_length" begin
-    # ASCII: all encodings equal sizeof
-    @test encoded_length("hello", UTF8) == 5
-    @test encoded_length("hello", UTF16) == 5
-    @test encoded_length("hello", UTF32) == 5
-
-    # BMP characters (日本語): UTF-8 > UTF-16 = UTF-32
-    @test encoded_length("日本語", UTF8) == 9   # 3 bytes each
-    @test encoded_length("日本語", UTF16) == 3  # 1 unit each
-    @test encoded_length("日本語", UTF32) == 3  # 1 char each
-
-    # Non-BMP (emoji): UTF-8 > UTF-16 > UTF-32
-    @test encoded_length("😀", UTF8) == 4   # 4 bytes
-    @test encoded_length("😀", UTF16) == 2  # surrogate pair
-    @test encoded_length("😀", UTF32) == 1  # 1 char
-
-    # Mixed: ASCII + BMP + non-BMP
-    s = "a日😀"
-    @test encoded_length(s, UTF8) == 1 + 3 + 4  # 8
-    @test encoded_length(s, UTF16) == 1 + 1 + 2 # 4
-    @test encoded_length(s, UTF32) == 1 + 1 + 1 # 3
 end
 
 end # module test_string
