@@ -1680,10 +1680,16 @@ like internal variables from `@ast`.
 """
 function is_from_user_ast(provs::SyntaxList)
     length(provs) == 1 && return true
-    fprov, lprov = first(provs), last(provs)
-    JS.sourcefile(lprov) == JS.sourcefile(fprov) || return false
-    return JS.byte_range(lprov) ⊆ JS.byte_range(fprov)
+    return is_within_source(last(provs), first(provs))
 end
+
+"""
+    is_within_source(inner::SyntaxTree, outer::SyntaxTree) -> Bool
+
+Return whether the source text of `inner` lies within that of `outer` in the same file.
+"""
+is_within_source(inner::SyntaxTree, outer::SyntaxTree) =
+    JS.sourcefile(inner) == JS.sourcefile(outer) && JS.byte_range(inner) ⊆ JS.byte_range(outer)
 
 function is_noreturn_call(
         ctx3::JL.VariableAnalysisContext, st3::SyntaxTree,
