@@ -380,7 +380,11 @@ end
 
 function range_lines(range::Range)
     startline = Int(range.start.line + 1)
-    endline = Int(range.var"end".line + 1)
+    endpos = range.var"end"
+    endline = Int(endpos.line + 1)
+    if endpos.character == 0 && endpos.line > range.start.line
+        endline -= 1
+    end
     return "$startline:$endline"
 end
 

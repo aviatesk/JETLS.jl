@@ -720,6 +720,43 @@ end
         @test occursin("@test begin", code_actions[1].title)
         @test code_actions[1].command.command == JETLSCore.COMMAND_TESTRUNNER_RUN_TESTCASE
     end
+
+    # Cursors right after a test target it, but selections only touching its boundary
+    # and cursors on the next line don't
+    let server = JETLSCore.Server()
+        test_code_with_positions = """
+        │y = 0
+        │@testset "foo" begin
+            @test tru│e│
+        │end│
+        │x│ = 1
+        """
+        test_code, positions = JETLSCore.get_text_and_positions(test_code_with_positions)
+        @test length(positions) == 8
+
+        uri = URI("file://runtests.jl")
+        fi = JETLSCore.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 1
+        tsn = JETLSCore.testset_name(testsetinfos[1])
+        testset_title = "$(JETLSCore.TESTRUNNER_RUN_TITLE) $tsn"
+        testcase_title = "$(JETLSCore.TESTRUNNER_RUN_TITLE) `@test true`"
+
+        action_titles(i::Int, j::Int = i) = String[code_action.title
+            for code_action in JETLSCore.testrunner_code_actions(uri, fi,
+                LSP.Range(; start = positions[i], var"end" = positions[j]))]
+
+        @test action_titles(4) == [testset_title, testcase_title]
+        @test action_titles(5) == [testset_title]
+        @test action_titles(6) == [testset_title]
+        @test isempty(action_titles(7))
+        @test isempty(action_titles(8))
+
+        @test isempty(action_titles(1, 2))
+        @test action_titles(3, 4) == [testset_title, testcase_title]
+        @test action_titles(4, 6) == [testset_title]
+        @test isempty(action_titles(6, 8))
+    end
 end
 
 @testset "testsetinfos preservation" begin
