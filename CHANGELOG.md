@@ -53,6 +53,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics on syntax errors that a macro reports in its arguments are now shown at the offending argument instead of the whole macro call, and their messages no longer include a copy of the source code:
+  ```julia
+  GC.@preserve 1 x # previously reported on the whole call
+  #            ^ now reported here: `preserved variable must be a symbol`
+  ```
+
 ### Fixed
 
 - Fixed false [`inference/type-error/type-assert`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/type-assert) reports on type assertions to `Union{}`, which were reported as if `Union{}` were not a type.

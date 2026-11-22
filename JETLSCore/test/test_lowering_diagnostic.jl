@@ -1396,6 +1396,53 @@ end
         @test info.message == "var\"@m_custom_error\"(::LineNumberNode, ::Module, ::Any)"
     end
 
+    @testset "macro expansion error diagnostics for a lowering error thrown by a macro" begin
+        diagnostics = get_lowering_diagnostics("x = GC.@preserve 1 y";
+            code=JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE, context_module=@__MODULE__)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Error expanding macro\npreserved variable must be a symbol"
+        # narrowed down to the tree reported by the lowering error
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = GC.@preserve ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = GC.@preserve 1")
+    end
+
+    @testset "macro expansion error diagnostics for a lowering error about macro-generated code" begin
+        mod = Module()
+        include_string(mod, """
+            macro m_preserve_literal()
+                :(GC.@preserve 1 y)
+            end
+            """, "Untitled-1")
+        diagnostics = get_lowering_diagnostics("x = @m_preserve_literal";
+            code=JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE, context_module=mod)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Error expanding macro\npreserved variable must be a symbol"
+        # the reported tree is outside of this file, so the whole macro call is reported
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = @m_preserve_literal")
+    end
+
+    @testset "macro expansion error diagnostics for an error whose `showerror` throws" begin
+        mod = Module()
+        include_string(mod, """
+            struct BrokenShowError <: Exception end
+            Base.showerror(::IO, ::BrokenShowError) = error("broken `showerror`")
+            Base.show(::IO, ::Type{BrokenShowError}) = error("broken `show`")
+            macro m_broken_show_error(_)
+                throw(BrokenShowError())
+            end
+            """, "Untitled-1")
+        diagnostics = get_lowering_diagnostics("@m_broken_show_error 42"; context_module=mod)
+        diagnostic = only(diagnostics)
+        @test startswith(diagnostic.message, "Error expanding macro\n")
+        @test endswith(diagnostic.message,
+            "\n`BrokenShowError` (`showerror` threw while displaying this error)")
+    end
+
     @testset "nested macro expansion error diagnostics" begin
         diagnostics = get_lowering_diagnostics("""let
             @m_outer_error missing

@@ -2641,25 +2641,39 @@ function per_stmt_diagnostics!(
                 st = macro_expansion_stacktrace(catch_backtrace())
                 msg = err.msg
                 inner = err.err
+                provs = BS.flattened_provenance(err.ex)
+                call_site = first(provs)
+                range_node = call_site
                 if msg == "Macro not found" && inner isa UndefVarError
                     msg = "Macro name `$(inner.var)` not found"
                     relatedInformation = nothing
                 else
-                    # in `world`, which has e.g. the `showerror` methods of the analyzed code
-                    errmsg = sprint() do io::IO
-                        with_base_render_lock(Base.invoke_in_world, world, showerror, io, inner)
+                    if inner isa JL.LoweringError && !inner.internal
+                        errmsg = inner.msg
+                        # the reported tree may come from a macro definition instead of the call
+                        if !isempty(inner.sts) && is_within_source(first(inner.sts), call_site)
+                            range_node = first(inner.sts)
+                        end
+                    else
+                        errmsg = try
+                            # in `world`, which has e.g. the `showerror` methods of the analyzed code
+                            sprint() do io::IO
+                                with_base_render_lock(Base.invoke_in_world, world, showerror, io, inner)
+                            end
+                        catch
+                            "`$(nameof(typeof(inner)))` (`showerror` threw while displaying this error)"
+                        end
                     end
                     msg *= "\n" * postprocessor(errmsg)
                     relatedInformation = stacktrace_to_related_information(st, world, postprocessor)
                 end
-                provs = BS.flattened_provenance(err.ex)
                 provs′ = @view provs[2:end]
                 if !isempty(provs′)
                     relatedInformation = @something relatedInformation DiagnosticRelatedInformation[]
                     provenances_to_related_information!(relatedInformation, provs′, msg)
                 end
                 push!(diagnostics, Diagnostic(;
-                    range = jsobj_to_range(first(provs), fi),
+                    range = jsobj_to_range(range_node, fi),
                     severity = DiagnosticSeverity.Error,
                     message = msg,
                     source = DIAGNOSTIC_SOURCE_LIVE,
