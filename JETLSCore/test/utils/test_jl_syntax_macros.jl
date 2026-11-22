@@ -28,6 +28,12 @@ isnothing(_) = true
 something(_) = :shadowed
 end
 
+module scoped_values_module
+using Base.ScopedValues
+const sv1 = ScopedValue(1)
+const sv2 = ScopedValue(:a)
+end
+
 module atomic_macro_alias_module
 import Base: @atomic as @at
 macro atomic(_)
@@ -485,6 +491,81 @@ end
                 """)
             assert_binding_provenance(res, :local, "lk")
             assert_no_binding(res, :global, "lk")
+        end
+    end
+end
+
+@testset "@with" begin
+    @testset "macro expansion" begin
+        let st1 = jlexpand(scoped_values_module, "@with sv1 => 2 sv2 => :b f(x)")
+            @test JS.head(st1) === :tryfinally
+            @test JS.sourcetext(st1[1]) == "f(x)"
+            scope = st1[3]
+            @test JS.head(scope) === :call
+            @test JS.numchildren(scope) == 4
+            @test JS.sourcetext(scope[3][2]) == "sv1"
+            @test JS.sourcetext(scope[4][2]) == "sv2"
+        end
+    end
+
+    @testset "validation" begin
+        let diags = collect_macro_diagnostics() do
+                jlexpand(scoped_values_module, "@with")
+            end
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLSCore.LSP.DiagnosticSeverity.Error
+            @test occursin("`@with` expects at least one argument", d.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve(scoped_values_module, """
+                function f(xxx)
+                    @with sv1 => xxx begin
+                        yyy = sv1[]
+                    end
+                    yyy, zzz
+                end
+                """)
+            assert_binding_provenance(res, :global, "sv1")
+            assert_binding_provenance(res, :argument, "xxx")
+            assert_binding_provenance(res, :local, "yyy")
+            assert_no_binding(res, :global, "yyy")
+            assert_binding_provenance(res, :global, "zzz")
+        end
+    end
+
+    @testset "runtime semantics" begin
+        @test jleval(scoped_values_module, "@with sv1 => 2 sv1[]") === 2
+        @test jleval(scoped_values_module, "@with sv1 => 2 sv2 => :b (sv1[], sv2[])") === (2, :b)
+        @test jleval(scoped_values_module, """
+            let ps = (sv1 => 3, sv2 => :c)
+                @with ps... (sv1[], sv2[])
+            end
+            """) === (3, :c)
+        @test jleval(scoped_values_module, """
+            let r = @with sv1 => 4 sv1[]
+                (r, sv1[])
+            end
+            """) === (4, 1)
+        @test jleval(scoped_values_module, "@with sv1 => 10 @with sv1 => sv1[] + 1 sv1[]") === 11
+        @test jleval(scoped_values_module, """
+            let
+                @with sv1 => 5 begin
+                    y = sv1[]
+                end
+                y
+            end
+            """) === 5
+        @test jleval(scoped_values_module, "@with sv1 => 6") === (scoped_values_module.sv1 => 6)
+
+        @testset "generated helper hygiene" begin
+            @test jleval(scoped_values_module, """
+                let Scope = nothing, ScopedValues = nothing
+                    @with sv1 => 7 sv1[]
+                end
+                """) === 7
         end
     end
 end

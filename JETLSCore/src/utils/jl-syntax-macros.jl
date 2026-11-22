@@ -175,6 +175,7 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Base => Symbol("@specialize"),
     Base => Symbol("@static"),
     Base.Threads => Symbol("@spawn"),
+    Base.ScopedValues => Symbol("@with"),
     Base.CoreLogging => Symbol("@debug"),
     Base.CoreLogging => Symbol("@error"),
     Base.CoreLogging => Symbol("@info"),
@@ -241,6 +242,32 @@ function Base.var"@lock"(__context__::BS.MacroContext, args::SyntaxTree...)
     push_macro_error!(mc, "`@lock` expects exactly two arguments: `lock body`")
     isempty(args) && return JL.@ast(__context__, mc, nothing::value)
     return JL.@ast(__context__, mc, [:block args...])
+end
+
+# New-style implementation of `Base.ScopedValues.@with`, mirroring Base's `tryfinally` that
+# runs the body in the dynamic scope
+# `Scope(Core.current_scope()::Union{Nothing,Scope}, pairs...)`. Unlike a `try` block, it
+# introduces no local scope, so bindings assigned in the body remain visible after it.
+function Base.ScopedValues.var"@with"(__context__::BS.MacroContext)
+    mc = __context__.macrocall
+    push_macro_error!(mc, "`@with` expects at least one argument")
+    return JL.@ast(__context__, mc, nothing::value)
+end
+
+function Base.ScopedValues.var"@with"(__context__::BS.MacroContext, exs::SyntaxTree...)
+    pairs = exs[1:end-1]
+    src = _macro_generated_source(__context__)
+    return JL.@ast(__context__, src, [:tryfinally
+        exs[end]
+        nothing::value
+        [:call
+            [:. [:top "ScopedValues"::identifier] [:inert "Scope"::identifier]]
+            [:(::)
+                [:call [:core "current_scope"::identifier]]
+                [:curly [:core "Union"::identifier]
+                    [:core "Nothing"::identifier]
+                    [:. [:top "ScopedValues"::identifier] [:inert "Scope"::identifier]]]]
+            pairs...]])
 end
 
 # Stub new-style implementation of `Threads.@spawn`. The real macro wraps the

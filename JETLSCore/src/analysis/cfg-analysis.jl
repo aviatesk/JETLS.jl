@@ -354,8 +354,9 @@ function undef_direct_assign_var_id(node::SyntaxTree)
 end
 
 # Collect variables that are definitely assigned (direct top-level assignments)
-# in a branch. Only considers assignments at the top level of `:block` nodes,
-# not those nested inside conditionals/loops.
+# in a branch. Only considers assignments at the top level of `:block` nodes and of
+# `:tryfinally` nodes, whose children all run whenever they complete normally, not
+# those nested inside conditionals/loops.
 function undef_collect_branch_direct_assigns(
         branch::SyntaxTree, candidates::Set{JL.IdTag}
     )
@@ -372,7 +373,7 @@ function undef_scan_direct_assigns!(
         if var_id in candidates
             push!(result, var_id)
         end
-    elseif JS.head(node) == :block
+    elseif JS.head(node) == :block || JS.head(node) == :tryfinally
         for child in JS.children(node)
             undef_scan_direct_assigns!(result, child, candidates)
         end
@@ -666,6 +667,10 @@ function linearize_cfg_events!(
         cfg_emit_label!(lin, end_label)
 
     elseif k == :tryfinally
+        # The dynamic scope of e.g. `@with` is evaluated before the handler is entered.
+        if JS.numchildren(ex3) >= 3
+            linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
+        end
         finally_label = cfg_make_label!(lin)
         return_label = cfg_make_label!(lin)
         end_label = cfg_make_label!(lin)

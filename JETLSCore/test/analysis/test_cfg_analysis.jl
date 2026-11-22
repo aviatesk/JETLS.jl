@@ -929,6 +929,36 @@ end
         @test status["y"] === nothing
     end
 
+    # The body of a `try`/`finally` or `@with` has run when it completes normally
+    let status = get_undef_status("""
+        function func(x::Bool)
+            local y
+            if x
+                try
+                    y = 42
+                finally
+                end
+            end
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+    let status = get_undef_status("""
+        function func(x::Bool, sv)
+            if x
+                Base.ScopedValues.@with sv => 1 y = 42
+            end
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
     # Unlike `@isdefined`, a correlated condition may not hold, e.g. when a closure
     # reassigns the condition variable, so it does not make the use strict: `f(false)`
     # returns 0.
