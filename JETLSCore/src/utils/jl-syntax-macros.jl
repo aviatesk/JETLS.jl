@@ -155,6 +155,8 @@ const NEW_STYLE_MACRO_BINDINGS = (
     Base => Symbol("@locals"),
     Base => Symbol("@noinline"),
     Base => Symbol("@nospecialize"),
+    Base.GC => Symbol("@preserve"),
+    Base.Experimental => Symbol("@opaque"),
     # src/utils/jl-syntax-macros.jl, except the `@atomic` macros, `@cmd`, and `@lazy_str`
     # (see their stubs)
     Core => Symbol("@doc"),
