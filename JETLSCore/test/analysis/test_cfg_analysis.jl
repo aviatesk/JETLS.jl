@@ -959,6 +959,206 @@ end
         @test status["y"] === false
     end
 
+    # A `@goto` may skip the assignment, so a lambda with `@label`s records no implications
+    @testset "`@goto` $label" for (label, src) in (
+            "within the branch" => """
+            if x
+                skip && @goto done
+                y = 42
+                @label done
+            end
+            """,
+            "within `try`/`finally`" => """
+            if x
+                try
+                    skip && @goto done
+                    y = 42
+                    @label done
+                finally
+                end
+            end
+            """,
+            "into the branch" => """
+            skip && @goto inside
+            if x
+                y = 42
+                @label inside
+                nothing
+            end
+            """,
+            "out of the branch" => """
+            if x
+                skip && @goto out
+                y = 42
+            end
+            @label out
+            """,
+            "over the branch" => """
+            skip && @goto out
+            if x
+                y = 42
+            end
+            @label out
+            """)
+        status = get_undef_status("""
+            function func(x::Bool, skip::Bool)
+                local y
+                $src
+                if x
+                    println(y)
+                end
+            end
+            """)
+        @test status["y"] === nothing
+    end
+    let status = get_undef_status("""
+        function func(x::Bool, skip::Bool)
+            local y
+            skip && @goto tail
+            if x
+                y = 42
+            end
+            while true
+                if x
+                    println(y)
+                end
+                @label tail
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+    # nor uses the implications recorded outside of it, since a jump may bypass a condition
+    let status = get_undef_status("""
+        function func(x::Bool, z::Bool)
+            local y
+            if x && z
+                y = 42
+            end
+            (() -> begin
+                @goto inner
+                if x
+                    @label inner
+                    if z
+                        println(y)
+                    end
+                end
+            end)()
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # The `@label`s of closures and the labels of loops are not targets of the jumps in
+    # the enclosing lambda
+    let status = get_undef_status("""
+        function func(x::Bool, xs)
+            k = 1
+            if x
+                g = () -> (@label l; k)
+                for i in xs
+                    i == 0 && continue
+                    i == 1 && break
+                end
+                y = 42
+            end
+            (() -> (@label l; (() -> (@label m; k))()))()
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # The jumps in the enclosing lambda cannot enter a closure, so a closure without
+    # `@label`s records and uses its own implications, but not the conditions around it
+    let status = get_undef_status("""
+        function func(x::Bool)
+            @label outer
+            local y
+            (() -> begin
+                if x
+                    y = 42
+                end
+                if x
+                    println(y)
+                end
+            end)()
+        end
+        """)
+        @test status["y"] === false
+    end
+    let status = get_undef_status("""
+        function func(x::Bool, z::Bool)
+            local y
+            @goto inner
+            if x
+                @label inner
+                (() -> begin
+                    if x
+                        if z
+                            y = 42
+                        end
+                    end
+                    if z
+                        println(y)
+                    end
+                end)()
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+    # nor the implications recorded before, which a backward jump may make stale, and which
+    # are dropped afterwards
+    let status = get_undef_status("""
+        function func(flag::Bool)
+            c = flag
+            local y
+            if c
+                y = 42
+            end
+            (() -> begin
+                @label again
+                (() -> begin
+                    if c
+                        println(y)
+                    end
+                end)()
+                if !c
+                    c = true
+                    @goto again
+                end
+            end)()
+        end
+        """)
+        @test status["y"] === nothing
+    end
+    let status = get_undef_status("""
+        function func(flag::Bool)
+            c = flag
+            local y, z
+            if c
+                y = 42
+            end
+            (() -> begin
+                @label l
+                (() -> begin
+                    c = true
+                    if c
+                        z = 0
+                    end
+                end)()
+            end)()
+            if c
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
     # Unlike `@isdefined`, a correlated condition may not hold, e.g. when a closure
     # reassigns the condition variable, so it does not make the use strict: `f(false)`
     # returns 0.

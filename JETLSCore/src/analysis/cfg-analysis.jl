@@ -128,12 +128,17 @@ mutable struct EventLinearizer
     const finally_breaks::Vector{Vector{Pair{Tuple{Int,Int},Int}}}
     # The number of finally bodies being linearized around the current point.
     finally_depth::Int
-    function EventLinearizer()
+    # Whether `cond_implies_defined` is recorded and used. It is not in the body of a lambda
+    # with `@label`s, where a jump to a label may bypass the assignments that implications
+    # are recorded from, and the conditions in `active_cond_vars`.
+    use_cond_implies::Bool
+    function EventLinearizer(use_cond_implies::Bool)
         blocks = EventBlock[EventBlock(1)]
         new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
             Dict{String,Tuple{Int,Int}}(), Dict{String,Int}(),
             Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[],
-            StatementRecord[], Int[], Int[], Vector{Pair{Tuple{Int,Int},Int}}[], 0)
+            StatementRecord[], Int[], Int[], Vector{Pair{Tuple{Int,Int},Int}}[], 0,
+            use_cond_implies)
     end
 end
 
@@ -365,6 +370,19 @@ function undef_collect_branch_direct_assigns(
     return result
 end
 
+# Whether `node` contains a `@label` of the enclosing lambda. The labels of `:break` and
+# `:symbolicblock` only name the blocks that `break` leaves.
+function undef_has_symboliclabel(node::SyntaxTree)
+    k = JS.head(node)
+    k == :symboliclabel && return true
+    (JS.is_leaf(node) || k == :lambda) && return false
+    for (i, child) in enumerate(JS.children(node))
+        i == 1 && (k == :break || k == :symbolicblock) && continue
+        undef_has_symboliclabel(child) && return true
+    end
+    return false
+end
+
 function undef_scan_direct_assigns!(
         result::Set{JL.IdTag}, node::SyntaxTree, candidates::Set{JL.IdTag}
     )
@@ -397,6 +415,7 @@ end
 function undef_emit_cond_implied_hints!(
         lin::EventLinearizer, cond::SyntaxTree, candidates::Set{JL.IdTag}
     )
+    lin.use_cond_implies || return
     isempty(lin.cond_implies_defined) && return
     cond_vars = JL.IdTag[]
     undef_cond_binding_ids!(cond_vars, cond)
@@ -423,6 +442,7 @@ function undef_record_cond_implies!(
         lin::EventLinearizer, cond_key::Union{Nothing, Set{JL.IdTag}},
         direct_assigns::Set{JL.IdTag}
     )
+    lin.use_cond_implies || return
     isnothing(cond_key) && return
     isempty(direct_assigns) && return
     existing = get(lin.cond_implies_defined, cond_key, nothing)
@@ -538,10 +558,25 @@ function linearize_cfg_events!(
             # The closure's `@label`s are separate from the enclosing lambda's ones.
             outer_goto_targets = copy(lin.goto_targets)
             empty!(lin.goto_targets)
+            outer_use_cond_implies = lin.use_cond_implies
+            lin.use_cond_implies = !undef_has_symboliclabel(ex3[4])
+            # A jump in the enclosing code may have bypassed what its implications and the
+            # conditions in `active_cond_vars` assume, so a closure that uses implications
+            # starts without them. Since the closure does not track their invalidations,
+            # they are also dropped afterwards.
+            fresh = !outer_use_cond_implies && lin.use_cond_implies
+            outer_active_cond_vars = copy(lin.active_cond_vars)
             let saved = undef_save_cond_implied(lin)
+                if fresh
+                    empty!(lin.cond_implies_defined)
+                    empty!(lin.active_cond_vars)
+                end
                 linearize_cfg_events!(lin, ctx3, ex3[4], candidates, allow_noreturn_optimization)
+                fresh && empty!(lin.cond_implies_defined)
                 undef_restore_cond_implied!(lin, saved)
             end
+            copy!(lin.active_cond_vars, outer_active_cond_vars)
+            lin.use_cond_implies = outer_use_cond_implies
             copy!(lin.goto_targets, outer_goto_targets)
             pop!(lin.return_labels)
             cfg_emit_label!(lin, skip_label)
@@ -1104,7 +1139,8 @@ function build_lambda_cfg(
         Set{JL.IdTag}()
     end
 
-    lin = EventLinearizer()
+    lin = EventLinearizer(
+        JS.numchildren(lambda_st3) < 4 || !undef_has_symboliclabel(lambda_st3[4]))
     if JS.numchildren(lambda_st3) >= 4
         linearize_cfg_events!(
             lin, ctx3, lambda_st3[4], candidates, allow_noreturn_optimization)
