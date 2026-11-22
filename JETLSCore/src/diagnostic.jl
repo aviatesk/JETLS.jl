@@ -923,7 +923,10 @@ function emit_macro_diagnostics!(
 end
 
 # TODO Use actual file cache (with proper character encoding)
-function provenances_to_related_information!(relatedInformation::Vector{DiagnosticRelatedInformation}, provs, msg)
+function provenances_to_related_information!(
+        relatedInformation::Vector{DiagnosticRelatedInformation},
+        provs::AbstractVector{<:SyntaxTree}, msg::AbstractString
+    )
     for prov in provs
         filename = JS.filename(prov)
         uri = to_valid_uri(filename)
@@ -936,7 +939,7 @@ function provenances_to_related_information!(relatedInformation::Vector{Diagnost
                 uri,
                 range = Range(;
                     start = offset_to_xy(code, JS.first_byte(sr), filename),
-                    var"end" = offset_to_xy(code, JS.last_byte(sr), filename)))
+                    var"end" = offset_to_xy(code, JS.last_byte(sr) + 1, filename)))
             message = JS.sourcetext(sr)
         else
             location = Location(;

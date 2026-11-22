@@ -1443,6 +1443,17 @@ end
             "\n`BrokenShowError` (`showerror` threw while displaying this error)")
     end
 
+    @testset "provenances_to_related_information!" begin
+        st0 = jlparse("foo(bar)"; rule=:statement, filename="provenance.jl")
+        info = only(JETLSCore.provenances_to_related_information!(
+            DiagnosticRelatedInformation[], [st0[2]], "message"))
+        @test info.message == "bar"
+        @test info.location.range.start.line == 0
+        @test info.location.range.start.character == sizeof("foo(")
+        @test info.location.range.var"end".line == 0
+        @test info.location.range.var"end".character == sizeof("foo(bar")
+    end
+
     @testset "nested macro expansion error diagnostics" begin
         diagnostics = get_lowering_diagnostics("""let
             @m_outer_error missing
