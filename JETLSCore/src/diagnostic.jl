@@ -2604,6 +2604,100 @@ function analyze_lowered_code!(
     return diagnostics
 end
 
+"""
+    lowering_internal_error_diagnostic(
+        fi::FileInfo, st0::SyntaxTree, err, postprocessor::LSPostProcessor;
+        markdown_rendering::Bool = false) -> Diagnostic
+
+Create a `lowering/internal-error` diagnostic for `err`, an error that is not
+[`is_user_lowering_error`](@ref) thrown while lowering `st0`. Such an error indicates a bug
+in JuliaLowering or JETLS, but it often comes from invalid code that JuliaLowering does not
+reject properly, so it is reported rather than silently dropping the diagnostics of `st0`.
+
+The message asks to report the bug. With `markdown_rendering`, it is followed by the full
+`showerror` output of `err` in a code block, which includes e.g. the provenance of the
+reported trees and helps to report the bug.
+"""
+function lowering_internal_error_diagnostic(
+        fi::FileInfo, st0::SyntaxTree, @nospecialize(err), postprocessor::LSPostProcessor;
+        markdown_rendering::Bool = false
+    )
+    err isa LoadError && (err = err.error)
+    full_detail = markdown_rendering ?
+        try; rstrip(sprint(locked_showerror, err)); catch; nothing; end : nothing
+    range_node = nothing
+    detail = ""
+    if err isa JL.MacroExpansionError
+        call_site = macro_call_site(err, st0)
+        is_within_source(call_site, st0) && (range_node = call_site)
+        err = innermost_macro_expansion_error(err)
+        detail = err.msg * "\n"
+        err = err.err
+    end
+    if err isa JL.LoweringError
+        detail *= err.msg
+        if !isempty(err.sts)
+            prov = provenance_within(first(err.sts), st0)
+            prov === nothing || (range_node = prov)
+        end
+    else
+        detail *= try
+            first(split(sprint(locked_showerror, err), '\n'))
+        catch
+            "`$(nameof(typeof(err)))` (`showerror` threw while displaying this error)"
+        end
+    end
+    issues_url = "https://github.com/aviatesk/JETLS.jl/issues"
+    message = "Lowering failed with an internal error; diagnostics for this code may be incomplete\n" *
+        postprocessor(detail) * "\n\n" *
+        "This is a bug in JuliaLowering.jl or JETLS even if the code is invalid; please report it at " *
+        (markdown_rendering ? "<$issues_url>" : issues_url)
+    # a single-line error has nothing more than the summary
+    if full_detail !== nothing && occursin('\n', full_detail)
+        message = let message=message
+            sprint() do io::IO
+                print(io, message, "\n\n")
+                JET.print_markdown_codeblock(io, postprocessor(full_detail))
+            end
+        end
+    end
+    return Diagnostic(;
+        range = range_node === nothing ? first_line_range(st0, fi) : jsobj_to_range(range_node, fi),
+        severity = DiagnosticSeverity.Information,
+        message,
+        source = DIAGNOSTIC_SOURCE_LIVE,
+        code = LOWERING_INTERNAL_ERROR_CODE,
+        codeDescription = diagnostic_code_description(LOWERING_INTERNAL_ERROR_CODE))
+end
+
+# The innermost provenance of `st` written in `st0`, e.g. the call of the macro that
+# generated `st`
+function provenance_within(st::SyntaxTree, st0::SyntaxTree)
+    for prov in Iterators.reverse(BS.flattened_provenance(st))
+        is_within_source(prov, st0) && return prov
+    end
+    return nothing
+end
+
+"""
+    macro_call_site(err::JL.MacroExpansionError, st0::SyntaxTree) -> SyntaxTree
+
+Return the call site in `st0` of the innermost macro expansion in the chain of nested
+`JL.MacroExpansionError`s from `err`, or the call site of the outermost expansion when none
+lies within `st0`. A nested expansion may come from a tree outside of `st0`, e.g. a template
+that a macro expands with `JL.macroexpand`.
+"""
+function macro_call_site(err::JL.MacroExpansionError, st0::SyntaxTree)
+    call_site = first(BS.flattened_provenance(err.ex))
+    while true
+        prov = provenance_within(err.ex, st0)
+        prov === nothing || (call_site = prov)
+        inner = err.err
+        inner isa JL.MacroExpansionError || return call_site
+        err = inner
+    end
+end
+
 function per_stmt_diagnostics!(
         diagnostics::Vector{Diagnostic}, candidates::Vector{UndefGlobalCandidate},
         uri::URI, fi::FileInfo, st0::SyntaxTree, context_module::Module, world::UInt,
@@ -2611,7 +2705,8 @@ function per_stmt_diagnostics!(
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
         soft_scope::Bool = false,
-        deprecated_binding_cache::DeprecatedBindingCache = DeprecatedBindingCache()
+        deprecated_binding_cache::DeprecatedBindingCache = DeprecatedBindingCache(),
+        markdown_rendering::Bool = false
     )
     @assert JS.head(st0) ∉ (:toplevel, :module)
 
@@ -2642,16 +2737,17 @@ function per_stmt_diagnostics!(
         elseif err isa JL.MacroExpansionError && is_user_lowering_error(err)
             if !skip_analysis_requiring_context
                 st = macro_expansion_stacktrace(catch_backtrace())
+                call_site = macro_call_site(err, st0)
+                err = innermost_macro_expansion_error(err)
                 msg = err.msg
                 inner = err.err
                 provs = BS.flattened_provenance(err.ex)
-                call_site = first(provs)
                 range_node = call_site
                 if msg == "Macro not found" && inner isa UndefVarError
                     msg = "Macro name `$(inner.var)` not found"
                     relatedInformation = nothing
                 else
-                    if inner isa JL.LoweringError && !inner.internal
+                    if inner isa JL.LoweringError
                         errmsg = inner.msg
                         # the reported tree may come from a macro definition instead of the call
                         if !isempty(inner.sts) && is_within_source(first(inner.sts), call_site)
@@ -2670,7 +2766,9 @@ function per_stmt_diagnostics!(
                     msg *= "\n" * postprocessor(errmsg)
                     relatedInformation = stacktrace_to_related_information(st, world, postprocessor)
                 end
-                provs′ = @view provs[2:end]
+                # the first provenance is usually the call site reported as the range, but
+                # not when the expansion comes from outside of `st0`
+                provs′ = is_within_source(first(provs), call_site) ? @view(provs[2:end]) : provs
                 if !isempty(provs′)
                     relatedInformation = @something relatedInformation DiagnosticRelatedInformation[]
                     provenances_to_related_information!(relatedInformation, provs′, msg)
@@ -2685,6 +2783,12 @@ function per_stmt_diagnostics!(
                     relatedInformation))
             end
         else
+            # macros are resolved reliably only with the context, which is also why
+            # `lowering/macro-expansion-error` is reported only then
+            if !(skip_analysis_requiring_context && err isa JL.MacroExpansionError)
+                push!(diagnostics, lowering_internal_error_diagnostic(
+                    fi, st0, err, postprocessor; markdown_rendering))
+            end
             report_lowering_bug(err)
         end
         nothing # signal primary-attempt failure to the fallback path
@@ -2704,6 +2808,8 @@ function per_stmt_diagnostics!(
             jl_lower_for_scope_resolution(context_module, world, st0;
                 recover_from_macro_errors=false, convert_closures=true, soft_scope)
         catch err
+            # errors of this approximation of the macro expansions are not reported, e.g. an
+            # internal error on code that a stripped macro would have transformed
             is_user_lowering_error(err) || report_lowering_bug(err)
             return diagnostics
         end
@@ -3047,6 +3153,7 @@ function compute_per_file_diagnostics(
     # necessarily orphaned there
     analyze_orphaned_docstrings!(diagnostics, uri, file_info, st0_top; check_toplevel = !soft_scope)
     (; deprecated_binding_cache) = server.state
+    markdown_rendering = supports(server, :textDocument, :diagnostic, :markupMessageSupport)
     iterate_toplevel_tree(st0_top) do st0::SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
@@ -3055,7 +3162,7 @@ function compute_per_file_diagnostics(
         per_stmt_diagnostics!(diagnostics, candidates, uri, file_info, st0,
             context_module, world, analyzer, postprocessor;
             skip_analysis_requiring_context, allow_unused_underscore, soft_scope,
-            deprecated_binding_cache)
+            deprecated_binding_cache, markdown_rendering)
         if !skip_analysis_requiring_context
             binding_occurrences = if lookup_func === nothing
                 get_binding_occurrences!(server.state, uri, file_info, st0)

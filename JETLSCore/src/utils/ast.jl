@@ -1579,6 +1579,23 @@ byte_range_to_range(rng::UnitRange{Int}, fi::Union{FileInfo,SavedFileInfo}) =
     Range(; start = offset_to_xy(fi, first(rng)), var"end" = offset_to_xy(fi, last(rng)+1))
 
 """
+    first_line_range(obj, fi::FileInfo) -> Range
+
+Return the range of the first line of `obj`, e.g. to report a whole statement without
+covering all of its lines.
+"""
+function first_line_range(obj, fi::FileInfo)
+    fb = JS.first_byte(obj)
+    lb = JS.last_byte(obj)
+    textbuf = fi.parsed_stream.textbuf
+    nl = findnext(==(UInt8('\n')), textbuf, fb)
+    if nl !== nothing && nl ≤ lb
+        lb = textbuf[nl - 1] == UInt8('\r') ? nl - 2 : nl - 1
+    end
+    return byte_range_to_range(fb:lb, fi)
+end
+
+"""
     line_absorbing_delete_range(obj, fi::FileInfo) -> Range
 
 Build a delete range covering the bytes of `obj`. When `obj` is the only
