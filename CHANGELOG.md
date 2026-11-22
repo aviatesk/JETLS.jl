@@ -83,6 +83,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   (Closed https://github.com/aviatesk/JETLS.jl/issues/1086)
 
+- Fixed missing lowering diagnostics such as [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var), [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var), and [`lowering/unused-local`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-local) for code inside `Base.ScopedValues.@with`:
+  ```julia
+  function f(c)
+      c && (x = 1)
+      @with sv => x begin # `x` may be undefined: was not reported
+          y = 1           # unused: was not reported
+          undefvar        # undefined: was not reported
+      end
+  end
+  ```
+
 - Fixed false diagnostics in [script analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/modes/script) when a macro reads a top-level `const` whose value JETLS can infer:
   ```julia
   const N = 1

@@ -2693,6 +2693,24 @@ end
             @test ri.location.range.start.line == 6
         end
     end
+
+    @testset "`@with` - use in the dynamic scope" begin
+        let diagnostics = get_lowering_diagnostics("""
+            function f(sv, c)
+                if c
+                    v = 1
+                end
+                Base.ScopedValues.@with sv => v begin
+                    sv[]
+                end
+            end
+            """)
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.message == "Variable `v` may be used before it is defined"
+            @test diagnostic.range.start.line == 4
+        end
+    end
 end
 
 @testset HierarchicalTestSet "dead store detection" begin
