@@ -1566,7 +1566,7 @@ end
         @test_throws JL.MacroExpansionError get_lowering_diagnostics(
             "x = @m_internal_error 42"; context_module=internal_lowering_error_module)
 
-        get_diagnostics(code) = Base.ScopedValues.@with JETLSCore.RETHROW_LOWERING_BUGS => false begin
+        get_diagnostics(code) = Base.ScopedValues.@with JETLSCore.__RETHROW_LOWERING_BUGS__ => false begin
             get_lowering_diagnostics(code; context_module=internal_lowering_error_module)
         end
 
@@ -1592,7 +1592,7 @@ end
 
         # without the context, internal errors during macro expansion are not reported, since
         # the macro may be resolved to a wrong one; this relies on `@goto 1` failing internally
-        let diagnostics = Base.ScopedValues.@with JETLSCore.RETHROW_LOWERING_BUGS => false begin
+        let diagnostics = Base.ScopedValues.@with JETLSCore.__RETHROW_LOWERING_BUGS__ => false begin
                 get_lowering_diagnostics("@goto 1"; context_module=nothing)
             end
             @test isempty(diagnostics)

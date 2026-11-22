@@ -217,25 +217,21 @@ function is_macro_stub_frame(frame::Base.StackTraces.StackFrame)
     return length(params) ≥ 2 && params[2] <: BS.MacroContext
 end
 
-"""
-    RETHROW_LOWERING_BUGS::ScopedValue{Bool}
-
-Whether [`report_lowering_bug`](@ref) rethrows in `JETLS_TEST_MODE`. Tests set it to
-`false` to check what JETLS reports for lowering bugs, e.g. `lowering/internal-error`.
-"""
-const RETHROW_LOWERING_BUGS = Base.ScopedValues.ScopedValue{Bool}(true)
+# Whether [`report_lowering_bug`](@ref) rethrows in `JETLS_TEST_MODE`. Tests set it to
+# `false` to check what JETLS reports for lowering bugs, e.g. `lowering/internal-error`.
+const __RETHROW_LOWERING_BUGS__ = Base.ScopedValues.ScopedValue{Bool}(true)
 
 """
     report_lowering_bug(err)
 
 Report `err`, a lowering error that is not [`is_user_lowering_error`](@ref): rethrow it in
-`JETLS_TEST_MODE` so that tests catch the bug, unless [`RETHROW_LOWERING_BUGS`](@ref) is
-set to `false`, and log it in `JETLS_DEV_MODE`.
+`JETLS_TEST_MODE` so that tests catch the bug, unless `__RETHROW_LOWERING_BUGS__` is set to
+`false`, and log it in `JETLS_DEV_MODE`.
 Must be called within the `catch` block that caught `err`.
 """
 function report_lowering_bug(@nospecialize err)
     @static if JETLS_TEST_MODE
-        RETHROW_LOWERING_BUGS[] && rethrow()
+        __RETHROW_LOWERING_BUGS__[] && rethrow()
     elseif JETLS_DEV_MODE
         bt = catch_backtrace()
         errmsg = try
