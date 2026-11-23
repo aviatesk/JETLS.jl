@@ -2,7 +2,7 @@ name = "JETLSCore"
 uuid = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
 version = "0.1.0"
 BaseSyntax = "avi/base-syntax-2026-11-22-patched"
-JET = "avi/JET-JETLS-head-2026-11-22"
+JET = "avi/JET-JETLS-head-2026-11-23"
 JuliaLowering = "avi/base-syntax-2026-11-22-patched"
 JuliaSyntax = "avi/base-syntax-2026-11-22-patched"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
@@ -34,7 +34,7 @@ TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 [sources]
 BaseSyntax = {rev = "84f0f727c6", subdir = "BaseSyntax", url = "https://github.com/JuliaLang/julia"}
 Compiler = {path = "../Compiler"}
-JET = {rev = "ad8700530e", url = "https://github.com/aviatesk/JET.jl"}
+JET = {rev = "35fb892ac5", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "84f0f727c6", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "84f0f727c6", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "../LSP"}

@@ -109,6 +109,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   (Fixed https://github.com/aviatesk/JETLS.jl/issues/1084 via https://github.com/aviatesk/JET.jl/pull/921)
 
+- Fixed false [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization) diagnostics (or [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error) on Julia 1.13 and earlier) on `Base.Experimental.@overlay` definitions for a method table created by `Base.Experimental.@MethodTable`, which no longer need a `full_analysis.concretization_patterns` config entry:
+  ```julia
+  module M
+  Base.Experimental.@MethodTable MT
+  Base.Experimental.@overlay MT sin(x::Float64) = 1.0 # was reported
+  end
+  ```
+  An `@overlay` definition for a method table whose value JETLS does not know is now reported as `toplevel/missing-concretization` rather than silently defining an ordinary method.
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/1072 via https://github.com/aviatesk/JET.jl/pull/924)
+
 ## 2026-11-20
 
 - Commit: [`8dbcea0`](https://github.com/aviatesk/JETLS.jl/commit/8dbcea0)
