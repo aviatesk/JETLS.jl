@@ -122,6 +122,30 @@ include("../setup.jl")
         @test isnothing(res.res.toplevel_error_report)
         @test isempty(res.res.inference_error_reports)
     end
+
+    # a constant whose value is known holds the value itself, not a copy of it
+    let res = @analyze_toplevel begin
+            macro ast() QuoteNode(:(f(1))) end
+            const a = @ast
+            const b = a
+            a === b || sin("julia")
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+    @static if isdefinedglobal(Core, :declare_const)
+        # code reading a constant does not see its redeclaration until the world advances
+        let res = @analyze_toplevel begin
+                const a = 1
+                let
+                    Core.declare_const(@__MODULE__, :a, "julia")
+                    sin(a)
+                end
+            end
+            @test isnothing(res.res.toplevel_error_report)
+            @test isempty(res.res.inference_error_reports)
+        end
+    end
 end
 
 @testset "`const x_ = ...` should not be concretized by default" begin
@@ -828,6 +852,65 @@ end
 
 end
 
+@testset "code run natively reading a constant (aviatesk/JETLS.jl#1081)" begin
+    let res = @analyze_toplevel begin
+            const N = 1
+            macro m() N + 1 end
+            sin(@m)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+    let res = @analyze_toplevel begin
+            const N = 1
+            macro m() N end
+            f() = (@m) + 1
+            f()
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+    let res = @analyze_toplevel begin
+            const N = Int(1)
+            macro m() N + 1 end
+            sin(@m)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+    # every branch declares the same value
+    let res = @analyze_toplevel begin
+            if rand(Bool)
+                const N = 1
+            else
+                const N = 1
+            end
+            macro m() N + 1 end
+            sin(@m)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+    let res = @analyze_toplevel begin
+            const FLAG = VERSION >= v"1.11"
+            @static if FLAG
+                f() = 1
+            end
+            sin(f())
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+    let res = @analyze_toplevel begin
+            const M = Base.Meta
+            using .M: isexpr
+            isexpr(:(f()), :call)
+        end
+        @test isnothing(res.res.toplevel_error_report)
+        @test isempty(res.res.inference_error_reports)
+    end
+end
+
 @testset "`:latestworld` in top-level frames" begin
     # the rest of the frame sees a declaration
     let res = @analyze_toplevel begin
@@ -1151,6 +1234,36 @@ end
             end
         end
         @test isnothing(res.res.toplevel_error_report)
+    end
+
+    let (vmod, res) = @analyze_toplevel2 begin
+            module OverlayMod
+            new_method_table(name::Symbol) =
+                ccall(:jl_new_method_table, Any, (Any, Any), name, @__MODULE__)
+            const MT = new_method_table(:MT)
+            f(x) = :ordinary
+            Base.Experimental.@overlay MT f(x::Int) = :overlay
+            end
+        end
+        report = res.res.toplevel_error_report
+        @test report isa MissingConcretizationErrorReport
+        @test report.var.name === :MT
+        @test report.isconst
+    end
+    let (vmod, res) = @analyze_toplevel2 begin
+            module OverlayMod
+            new_method_table(name::Symbol) =
+                ccall(:jl_new_method_table, Any, (Any, Any), name, @__MODULE__)
+            const MT = new_method_table(:MT)
+            f(x) = :ordinary
+            Base.Experimental.@overlay OverlayMod.MT f(x::Int) = :overlay
+            end
+        end
+        report = res.res.toplevel_error_report
+        @test report isa MissingConcretizationErrorReport
+        @test report.var.name === :MT
+        OverlayMod = @invokelatest getglobal(vmod, :OverlayMod)
+        @test (@invokelatest OverlayMod.f(1)) === :ordinary
     end
 
     mktempdir() do dir

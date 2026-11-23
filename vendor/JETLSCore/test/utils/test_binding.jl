@@ -12,8 +12,10 @@ const B = Base
 end
 
 module user_macro_module
-using JETLSCore: BS, SyntaxTree
+using JETLSCore: BS, JL, SyntaxTree
 var"@throwing"(::BS.MacroContext, ::SyntaxTree) = error("user macro failed")
+var"@throwing_internal"(::BS.MacroContext, ex::SyntaxTree) =
+    throw(JL.LoweringError("invariant broken", SyntaxTree[ex], [nothing], true))
 end
 
 # Stands in for a buggy macro stub in `jl-syntax-macros.jl`
@@ -41,6 +43,14 @@ end
     let (err, is_user) = lowering_error(user_macro_module, "@throwing x")
         @test err isa JETLSCore.JL.MacroExpansionError
         @test is_user
+    end
+    let (err, is_user) = lowering_error(user_macro_module, "@throwing_internal x")
+        @test err isa JETLSCore.JL.MacroExpansionError
+        @test !is_user
+    end
+    let (err, is_user) = lowering_error(user_macro_module, "@inline @throwing_internal x")
+        @test err isa JETLSCore.JL.MacroExpansionError
+        @test !is_user
     end
     let (err, is_user) = lowering_error(JETLSCore, "@throwing_stub_for_test x")
         @test err isa JETLSCore.JL.MacroExpansionError
