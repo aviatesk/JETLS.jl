@@ -26,10 +26,10 @@ refinements that the callees provide, e.g. through `InterConditional`.
  1 file changed, 14 insertions(+), 7 deletions(-)
 
 diff --git a/Compiler/src/abstractinterpretation.jl b/Compiler/src/abstractinterpretation.jl
-index 3ee40ffba3864f8eddc5b690b66cf4548d1ac8b7..4e698ba42d4e92a28386c9c452c9da58f23043fd 100644
+index 2c94d35603fe2d02265813551d7e698f2f7f8584..0a7c66e327a0c549f0beb3458c3defd92dca4270 100644
 --- a/Compiler/src/abstractinterpretation.jl
 +++ b/Compiler/src/abstractinterpretation.jl
-@@ -261,7 +261,8 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
+@@ -263,7 +263,8 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
                              Any[Bottom for _ in 1:length(argtypes)])
                      end
                      for i = 1:length(argtypes)
@@ -39,7 +39,7 @@ index 3ee40ffba3864f8eddc5b690b66cf4548d1ac8b7..4e698ba42d4e92a28386c9c452c9da58
                          conditionals[1][i] = conditionals[1][i] ⊔ᵢ cnd.thentype
                          conditionals[2][i] = conditionals[2][i] ⊔ᵢ cnd.elsetype
                      end
-@@ -291,7 +292,7 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
+@@ -293,7 +294,7 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
              end
              local fargs = arginfo.fargs
              if sv isa InferenceState && fargs !== nothing
@@ -48,7 +48,7 @@ index 3ee40ffba3864f8eddc5b690b66cf4548d1ac8b7..4e698ba42d4e92a28386c9c452c9da58
              end
              state.rettype = from_interprocedural!(interp, state.rettype, sv, arginfo, state.conditionals, vtypes)
              if widen_call_result(interp, si, state, sv)
-@@ -587,14 +588,19 @@ function from_interconditional(𝕃ᵢ::AbstractLattice, @nospecialize(rt), sv::
+@@ -589,14 +590,19 @@ function from_interconditional(𝕃ᵢ::AbstractLattice, @nospecialize(rt), sv::
      return widenconditional(rt)
  end
  
@@ -70,7 +70,7 @@ index 3ee40ffba3864f8eddc5b690b66cf4548d1ac8b7..4e698ba42d4e92a28386c9c452c9da58
      if isa(rt, InterConditional) && rt.slot == i
          return InterConditional(i, tmeet(𝕃ᵢ, rt.thentype, widenconst(argt)), tmeet(𝕃ᵢ, rt.elsetype, widenconst(argt)))
      end
-@@ -605,8 +611,9 @@ function conditional_argtype(𝕃ᵢ::AbstractLattice, @nospecialize(rt), @nospe
+@@ -607,8 +613,9 @@ function conditional_argtype(𝕃ᵢ::AbstractLattice, @nospecialize(rt), @nospe
      return InterConditional(i, thentype, elsetype)
  end
  
@@ -81,7 +81,7 @@ index 3ee40ffba3864f8eddc5b690b66cf4548d1ac8b7..4e698ba42d4e92a28386c9c452c9da58
      ⊏, ⊔ = strictpartialorder(𝕃ᵢ), join(𝕃ᵢ)
      slotrefinements = nothing
      for i = 1:length(fargs)
-@@ -621,7 +628,7 @@ function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{M
+@@ -623,7 +630,7 @@ function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{M
              for j = 1:length(applicable)
                  (;match) = applicable[j]
                  valid_as_lattice(match.spec_types, true) || continue
@@ -90,7 +90,7 @@ index 3ee40ffba3864f8eddc5b690b66cf4548d1ac8b7..4e698ba42d4e92a28386c9c452c9da58
              end
              if sigt ⊏ argt # i.e. signature type is strictly more specific than the type of the argument slot
                  if slotrefinements === nothing
-@@ -639,7 +646,7 @@ function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{M
+@@ -641,7 +648,7 @@ function collect_slot_refinements(𝕃ᵢ::AbstractLattice, applicable::Vector{M
              for j = 1:length(applicable)
                  (;match) = applicable[j]
                  valid_as_lattice(match.spec_types, true) || continue

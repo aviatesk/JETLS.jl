@@ -189,8 +189,12 @@ add_tfunc(fpext, 2, 2, conversion_tfunc, 1)
 # arithmetic
 # ----------
 
-@nospecs math_tfunc(𝕃::AbstractLattice, args...) = math_tfunc(widenlattice(𝕃), args...)
-@nospecs math_tfunc(::JLTypeLattice, x, xs...) = widenconst(x)
+@nospecs math_tfunc(𝕃::AbstractLattice, x) = math_tfunc(widenlattice(𝕃), x)
+@nospecs math_tfunc(𝕃::AbstractLattice, x, y) = math_tfunc(widenlattice(𝕃), x, y)
+@nospecs math_tfunc(𝕃::AbstractLattice, x, y, z) = math_tfunc(widenlattice(𝕃), x, y, z)
+@nospecs math_tfunc(::JLTypeLattice, x) = widenconst(x)
+@nospecs math_tfunc(::JLTypeLattice, x, y) = widenconst(x)
+@nospecs math_tfunc(::JLTypeLattice, x, y, z) = widenconst(x)
 
 add_tfunc(neg_int, 1, 1, math_tfunc, 0)
 add_tfunc(add_int, 2, 2, math_tfunc, 1)
@@ -395,7 +399,7 @@ end
     return egal_tfunc(widenlattice(𝕃), x, y)
 end
 @nospecs function egal_tfunc(::JLTypeLattice, x, y)
-    hasintersect(widenconst(x), widenconst(y)) || return Const(false)
+    hasintersect(widenconst_split(x), widenconst_split(y)) || return Const(false)
     return Bool
 end
 add_tfunc(===, 2, 2, egal_tfunc, 1)
@@ -425,7 +429,7 @@ end
     if arg1 isa MustAlias
         arg1 = widenmustalias(arg1)
     end
-    arg1t = arg1 isa Const ? typeof(arg1.val) : isconstType(arg1) ? typeof(type_parameter(arg1)) : widenconst(arg1)
+    arg1t = arg1 isa Const ? typeof(arg1.val) : isconstType(arg1) ? typeof(type_parameter(arg1)) : widenconst_split(arg1)
     a1 = unwrap_unionall(arg1t)
     if isa(a1, DataType) && !isabstracttype(a1)
         if a1 === Module
@@ -3006,7 +3010,7 @@ function getfield_effects(𝕃::AbstractLattice, argtypes::Vector{Any}, @nospeci
     bcheck = getfield_boundscheck(argtypes)
     nothrow = getfield_nothrow(𝕃, argtypes, bcheck)
     if is_relocatable_ptr_field(argtypes[1], argtypes[2])
-        if !ismutabletype(widenconst(obj)) || is_mutation_free_argtype(obj)
+        if !ismutabletype(widenconst_split(obj)) || is_mutation_free_argtype(obj)
             # access to immutable / mutation-free types is not modelled by `inaccessiblememonly`
             # so immediately widen these to ALWAYS_FALSE
             consistent = ALWAYS_FALSE
@@ -3037,7 +3041,7 @@ function getfield_effects(𝕃::AbstractLattice, argtypes::Vector{Any}, @nospeci
             noub = ALWAYS_FALSE
         end
     end
-    if hasintersect(widenconst(obj), Module)
+    if hasintersect(widenconst_split(obj), Module)
         # Modeled more precisely in abstract_eval_getglobal
         inaccessiblememonly = ALWAYS_FALSE
     elseif is_relocatable_ptr_field(argtypes[1], argtypes[2])
