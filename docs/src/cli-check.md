@@ -59,8 +59,8 @@ Files are analyzed in the same way as in the language server, as described in
 is determined by the nearest  `Project.toml` above each file and the file's
 location relative to it, regardless of the working directory. Unlike the
 language server,  `jetls check` also analyzes files outside the root path.
-The root path only determines where `.JETLSConfig.toml` is loaded from and how
-paths are  displayed (see [`--root`](@ref cli-check/options/root)).
+For these files, the root path only determines where `.JETLSConfig.toml` is
+loaded from and how paths are displayed (see [`--root`](@ref cli-check/options/root)).
 
 ### [Reading source from stdin](@id cli-check/input/stdin)
 
@@ -78,14 +78,25 @@ EOF
 By default, the source is analyzed like an unsaved buffer in the language
 server (see
 [Unsaved buffers and notebooks](@ref analysis/full/files/unsaved)) and is
-displayed as `<stdin>`. With [`--stdin-filename`](@ref cli-check/options/stdin-filename),
-it is analyzed as the file at the given path instead.
+displayed as `<stdin>`. It is analyzed as a standalone script in the
+environment of the nearest `Project.toml` at or above the
+[root path](@ref cli-check/options/root), so specify `--root` to analyze it in
+another environment:
+
+```bash
+jetls check --root=/path/to/project - <<< 'using SomePkg; SomePkg.f(1)'
+```
+
+With [`--stdin-filename`](@ref cli-check/options/stdin-filename), it is
+analyzed as the file at the given path instead, in the environment determined
+by that path.
 
 ## [Options](@id cli-check/options)
 
 ### [`--root=<path>`](@id cli-check/options/root)
 
-Sets the root path for configuration file lookup and relative path display.
+Sets the root path for configuration file lookup, relative path display, and
+the environment of the source read from stdin.
 By default, the package directory is used when exactly one
 [package directory](@ref cli-check/input) is given, and the current working
 directory otherwise.
@@ -95,6 +106,9 @@ When specified, JETLS will:
 - Look for `.JETLSConfig.toml` in the specified root directory
 - Resolve relative input paths against this root
 - Display file paths relative to this root in diagnostic output
+- Analyze the source [read from stdin](@ref cli-check/input/stdin) without
+  `--stdin-filename` in the environment of the nearest `Project.toml` at or
+  above this root
 
 ```bash
 # Use project root for configuration
