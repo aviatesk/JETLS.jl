@@ -95,25 +95,22 @@ function add_block_end_inlay_hint!(
     end
     # If there's already a comment like `end # keyword name`, don't display the inlay hint
     name = sym.name
-    bstart = xy_to_offset(fi, endpos) + 1
-    nexttc = next_nontrivia(fi.parsed_stream, bstart)
-    if !isnothing(nexttc)
-        commentrange = bstart:JS.first_byte(nexttc)-1
-        commentstr = String(fi.parsed_stream.textbuf[commentrange])
-        if (occursin(name, commentstr) ||
-            (keyword !== nothing && startswith(lstrip(commentstr), "# $keyword")) ||
-            (keyword !== nothing && startswith(lstrip(commentstr), "#= $keyword")))
-            return
-        end
+    textbuf = fi.parsed_stream.textbuf
+    bstart = xy_to_offset(fi, endpos)
+    bend = @something next_nontrivia_byte(fi.parsed_stream, bstart) lastindex(textbuf)+1
+    commentstr = String(textbuf[bstart:bend-1])
+    if ((!all(isspace, name) && occursin(name, commentstr)) ||
+        (keyword !== nothing && startswith(lstrip(commentstr), "# $keyword")) ||
+        (keyword !== nothing && startswith(lstrip(commentstr), "#= $keyword")))
+        return
     end
     displayLabel = "#= " * label * " =#"
-    newText = " " * displayLabel
-    offset = encoded_length(newText, fi.encoding)
-    textEdits = TextEdit[TextEdit(;
-        range = Range(;
-            start = Position(endpos; character = endpos.character+1),
-            var"end" = Position(endpos; character = endpos.character+1+offset)),
-        newText)]
+    labeltoks = JS.tokenize(displayLabel)
+    # e.g. `"#="` or `"=#"` in a string of the label would break the inserted comment
+    textEdits = (length(labeltoks) == 1 && JS.kind(only(labeltoks)) === JS.K"Comment") ?
+        TextEdit[TextEdit(;
+            range = Range(; start = endpos, var"end" = endpos),
+            newText = " " * displayLabel)] : nothing
     push!(inlay_hints, InlayHint(;
         position = endpos,
         textEdits,

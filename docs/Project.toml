@@ -6,7 +6,7 @@ JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
 
 [sources.JETLSCore]
 subdir = "vendor/JETLSCore"
-rev = "082749e00beb5d9a88b57f80bf543808b6f75168"
+rev = "0342be0571d8537857533bda9fec7545c0c7d39b"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JETLS]

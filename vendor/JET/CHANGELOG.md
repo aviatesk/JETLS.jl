@@ -6,7 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 <!-- links start -->
-[Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/aviatesk/JET.jl/compare/v0.13.4...HEAD
+[0.13.4]: https://github.com/aviatesk/JET.jl/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/aviatesk/JET.jl/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/aviatesk/JET.jl/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/aviatesk/JET.jl/compare/v0.13.0...v0.13.1
@@ -68,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.4]
+
 ### Fixed
 
 - Fixed top-level analysis ignoring a `:toplevel` expression within a block
@@ -89,6 +92,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   using Distributed
   @everywhere f() = 1
   f() # was reported: `f` is not defined
+  ```
+
+- Fixed top-level analysis giving code run during the analysis, such as a macro
+  being expanded, `@static`, or `using`, an internal placeholder object in
+  place of the value of a constant (aviatesk/JETLS.jl#1081). A constant whose
+  value is known in the analysis is now defined with the value itself:
+  ```julia
+  const N = 1
+  macro m() N end
+  f() = (@m) + 1 # was reported: no matching method found `+(::JET.AbstractBindingState, ::Int64)`
+
+  const M = Base.Meta
+  using .M: isexpr # used to fail: "M" does not name a module
+  ```
+
+- Fixed top-level analysis resolving references to `Main`, such as `Main.x`, to
+  the actual `Main` rather than the virtualized module in which the code is
+  analyzed, also within `eval`, macro expansions and most of the modules that
+  the analyzed code defines. Global variables referenced as
+  `Main.x` were reported as not defined, and module usages such as
+  `using Main.Foo` failed with a top-level error on Julia 1.13 and later
+  (aviatesk/JETLS.jl#1084):
+  ```julia
+  global x = 1
+  Main.x # was reported: `Main.x` is not defined
+  ```
+
+- Fixed top-level analysis failing on `Base.Experimental.@overlay` definitions
+  for a method table created by `Base.Experimental.@MethodTable`
+  (aviatesk/JETLS.jl#1072). An `@overlay` definition for a method table whose
+  value JET does not know is now reported as `MissingConcretizationErrorReport`
+  rather than silently defining an ordinary method:
+  ```julia
+  Base.Experimental.@MethodTable MT
+  Base.Experimental.@overlay MT sin(x::Float64) = 1.0 # used to fail: `MT` must have a concrete value
   ```
 
 ## [0.13.3]

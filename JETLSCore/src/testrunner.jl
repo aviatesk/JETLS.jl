@@ -195,6 +195,15 @@ end
 testrunner_code_actions(args...) = # used by tests
     testrunner_code_actions!(Union{CodeAction,Command}[], args...)
 
+# Unlike `overlap`, a selection that only touches the test range doesn't count,
+# but a cursor right after the test (e.g. `@test ...│`) still does.
+function testrunner_action_overlap(action_range::Range, test_range::Range)
+    if action_range.start == action_range.var"end"
+        return action_range.start ∈ test_range
+    end
+    return action_range.start < test_range.var"end" && test_range.start < action_range.var"end"
+end
+
 function testrunner_testset_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo,
         action_range::Range
@@ -208,8 +217,8 @@ end
 function testrunner_testset_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo, action_range::Range
     )
-    tsr = jsobj_to_range(testsetinfo.st0, fi; adjust_last=1) # +1 to support cases like `@testset "xxx" begin ... end│`
-    overlap(action_range, tsr) || return nothing
+    tsr = jsobj_to_range(testsetinfo.st0, fi)
+    testrunner_action_overlap(action_range, tsr) || return nothing
     tsn = testset_name(testsetinfo)
     clear_arguments = run_arguments = Any[uri, idx, tsn]
     if isdefined(testsetinfo, :result)
@@ -259,8 +268,8 @@ function testrunner_testcase_code_actions!(
         elseif JS.head(st0) === :macrocall && JS.numchildren(st0) ≥ 1
             macroname = st0[1]
             if get_name_val(macroname) in TEST_MACROS
-                tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`
-                overlap(action_range, tcr) || return nothing
+                tcr = jsobj_to_range(st0, fi)
+                testrunner_action_overlap(action_range, tcr) || return nothing
                 tcl = JS.source_line(st0)
                 tct = backtick(JS.sourcetext(st0))
                 run_arguments = Any[uri, tcl, tct]

@@ -1209,6 +1209,33 @@ end
     end
 end
 
+module internal_lowering_error_module
+using JETLSCore: BS, JL, SyntaxTree
+var"@m_internal_error"(::BS.MacroContext, ex::SyntaxTree) =
+    throw(JL.LoweringError("invariant broken", SyntaxTree[ex], [nothing], true))
+macro m_gen_internal_error()
+    :(@m_internal_error 1)
+end
+struct BrokenShowError <: Exception end
+Base.showerror(::IO, ::BrokenShowError) = error("broken `showerror`")
+Base.show(::IO, ::Type{BrokenShowError}) = error("broken `show`")
+macro ignore(_) nothing end
+end
+
+module macro_template_module
+using JETLSCore: BS, JL, JS, SyntaxTree
+function parse_template(code::String)
+    stream = JS.ParseStream(code)
+    JS.parse!(stream; rule=:statement)
+    return JS.build_tree(SyntaxTree, stream; filename="template.jl")
+end
+const PRESERVE_TEMPLATE = parse_template("GC.@preserve 1 y")
+const MISSING_MACRO_TEMPLATE = parse_template("@missing_template_macro x")
+var"@m_expand_template"(::BS.MacroContext) = JL.macroexpand(@__MODULE__, PRESERVE_TEMPLATE)
+var"@m_expand_missing_macro_template"(::BS.MacroContext) =
+    JL.macroexpand(@__MODULE__, MISSING_MACRO_TEMPLATE)
+end
+
 @testset HierarchicalTestSet "JuliaLowering error diagnostics" begin
     @testset "lowering error diagnostics" begin
         diagnostics = get_lowering_diagnostics("macro foo(x, y) \$(x) end"; context_module=@__MODULE__)
@@ -1394,6 +1421,227 @@ end
         @test diagnostic.message == "Error expanding macro\nMacroCheckError: custom message"
         info = only(something(diagnostic.relatedInformation))
         @test info.message == "var\"@m_custom_error\"(::LineNumberNode, ::Module, ::Any)"
+    end
+
+    @testset "macro expansion error diagnostics for a lowering error thrown by a macro" begin
+        diagnostics = get_lowering_diagnostics("x = GC.@preserve 1 y";
+            code=JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE, context_module=@__MODULE__)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Error expanding macro\npreserved variable must be a symbol"
+        # narrowed down to the tree reported by the lowering error
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = GC.@preserve ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = GC.@preserve 1")
+    end
+
+    @testset "macro expansion error diagnostics for a lowering error about macro-generated code" begin
+        mod = Module()
+        include_string(mod, """
+            macro m_preserve_literal()
+                :(GC.@preserve 1 y)
+            end
+            """, "Untitled-1")
+        diagnostics = get_lowering_diagnostics("x = @m_preserve_literal";
+            code=JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE, context_module=mod)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Error expanding macro\npreserved variable must be a symbol"
+        # the reported tree is outside of this file, so the whole macro call is reported
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = @m_preserve_literal")
+    end
+
+    @testset "macro expansion error diagnostics for an error whose `showerror` throws" begin
+        mod = Module()
+        include_string(mod, """
+            struct BrokenShowError <: Exception end
+            Base.showerror(::IO, ::BrokenShowError) = error("broken `showerror`")
+            Base.show(::IO, ::Type{BrokenShowError}) = error("broken `show`")
+            macro m_broken_show_error(_)
+                throw(BrokenShowError())
+            end
+            """, "Untitled-1")
+        diagnostics = get_lowering_diagnostics("@m_broken_show_error 42"; context_module=mod)
+        diagnostic = only(diagnostics)
+        @test startswith(diagnostic.message, "Error expanding macro\n")
+        @test endswith(diagnostic.message,
+            "\n`BrokenShowError` (`showerror` threw while displaying this error)")
+    end
+
+    @testset "provenances_to_related_information!" begin
+        st0 = jlparse("foo(bar)"; rule=:statement, filename="provenance.jl")
+        info = only(JETLSCore.provenances_to_related_information!(
+            DiagnosticRelatedInformation[], [st0[2]], "message"))
+        @test info.message == "bar"
+        @test info.location.range.start.line == 0
+        @test info.location.range.start.character == sizeof("foo(")
+        @test info.location.range.var"end".line == 0
+        @test info.location.range.var"end".character == sizeof("foo(bar")
+    end
+
+    @testset "internal lowering error diagnostics" begin
+        function internal_error_diagnostic(make_error, code::AbstractString; kwargs...)
+            server = JETLSCore.Server()
+            fi = JETLSCore.cache_file_info!(server, LOWERING_DIAGNOSTICS_URI, 1, code)
+            st0 = only(JS.children(JETLSCore.build_syntax_tree(fi)))
+            return JETLSCore.lowering_internal_error_diagnostic(
+                fi, st0, make_error(st0), JETLSCore.LSPostProcessor(); kwargs...)
+        end
+        let diagnostic = internal_error_diagnostic("f(x) = g(x)") do st0
+                JL.LoweringError("invariant broken", [st0[2]], [nothing], true)
+            end
+            @test diagnostic.code == JETLSCore.LOWERING_INTERNAL_ERROR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test startswith(diagnostic.message, "Lowering failed with an internal error")
+            @test occursin("\ninvariant broken\n", diagnostic.message)
+            @test occursin("https://github.com/aviatesk/JETLS.jl/issues", diagnostic.message)
+            @test !occursin("```", diagnostic.message)
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.start.character == sizeof("f(x) = ")
+            @test diagnostic.range.var"end".line == 0
+            @test diagnostic.range.var"end".character == sizeof("f(x) = g(x)")
+        end
+
+        # an error without a tree is reported at the first line of the statement
+        for code in ("function f(x)\n    x\nend", "function f(x)\r\n    x\r\nend")
+            diagnostic = internal_error_diagnostic(code) do _
+                ErrorException("No match found\nfor the tree")
+            end
+            @test occursin("\nNo match found\n", diagnostic.message)
+            @test !occursin("for the tree", diagnostic.message)
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.start.character == 0
+            @test diagnostic.range.var"end".line == 0
+            @test diagnostic.range.var"end".character == sizeof("function f(x)")
+        end
+
+        let diagnostic = internal_error_diagnostic("x = 1") do _
+                internal_lowering_error_module.BrokenShowError()
+            end
+            @test occursin("\n`BrokenShowError` (`showerror` threw while displaying this error)\n",
+                diagnostic.message)
+        end
+
+        # with Markdown rendering, the full error follows in a code block
+        let diagnostic = internal_error_diagnostic("f(x) = g(x)"; markdown_rendering=true) do st0
+                JL.LoweringError("invariant broken", [st0[2]], [nothing], true)
+            end
+            @test occursin("\ninvariant broken\n", diagnostic.message)
+            @test occursin("\n```\nsyntax: invariant broken (internal lowering bug)\n",
+                diagnostic.message)
+        end
+        let diagnostic = internal_error_diagnostic("x = 1"; markdown_rendering=true) do _
+                ErrorException("No match found")
+            end
+            @test occursin("\nNo match found\n", diagnostic.message)
+            @test !occursin("```", diagnostic.message)
+        end
+        let diagnostic = internal_error_diagnostic("x = 1"; markdown_rendering=true) do _
+                internal_lowering_error_module.BrokenShowError()
+            end
+            @test occursin("\n`BrokenShowError` (`showerror` threw while displaying this error)\n",
+                diagnostic.message)
+            @test !occursin("```", diagnostic.message)
+        end
+
+        let diagnostic = internal_error_diagnostic("x = @m_internal_error 42") do st0
+                try
+                    JETLSCore.jl_lower_for_scope_resolution(internal_lowering_error_module,
+                        Base.get_world_counter(), st0; recover_from_macro_errors=false)
+                catch err
+                    return err
+                end
+            end
+            @test occursin("\nError expanding macro\ninvariant broken\n", diagnostic.message)
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.start.character == sizeof("x = @m_internal_error ")
+            @test diagnostic.range.var"end".line == 0
+            @test diagnostic.range.var"end".character == sizeof("x = @m_internal_error 42")
+        end
+
+        # not reported as `lowering/macro-expansion-error` but passed to `report_lowering_bug`,
+        # which rethrows in `JETLS_TEST_MODE`
+        @test_throws JL.MacroExpansionError get_lowering_diagnostics(
+            "x = @m_internal_error 42"; context_module=internal_lowering_error_module)
+
+        get_diagnostics(code) = Base.ScopedValues.@with JETLSCore.__RETHROW_LOWERING_BUGS__ => false begin
+            get_lowering_diagnostics(code; context_module=internal_lowering_error_module)
+        end
+
+        # The fallback lowering strips most macrocalls, so the following two cases rely on
+        # JuliaLowering failing internally on a method named `_` to make the fallback fail
+
+        # reported from the primary lowering only
+        let diagnostics = get_diagnostics("@m_internal_error (_(x) = x)")
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLSCore.LOWERING_INTERNAL_ERROR_CODE
+            @test occursin("\nError expanding macro\ninvariant broken\n", diagnostic.message)
+        end
+
+        # not reported from the fallback lowering, which also strips `@ignore` here
+        let diagnostics = get_diagnostics("""
+                function f()
+                    @undefined_macro
+                    @ignore (_(x) = x)
+                end""")
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE
+        end
+
+        # without the context, internal errors during macro expansion are not reported, since
+        # the macro may be resolved to a wrong one; this relies on `@goto 1` failing internally
+        let diagnostics = Base.ScopedValues.@with JETLSCore.__RETHROW_LOWERING_BUGS__ => false begin
+                get_lowering_diagnostics("@goto 1"; context_module=nothing)
+            end
+            @test isempty(diagnostics)
+        end
+
+        # `@inline` wraps the error of the expansion of its argument in another `MacroExpansionError`
+        let diagnostics = get_diagnostics("@inline function f()\n    @m_internal_error 1\nend")
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLSCore.LOWERING_INTERNAL_ERROR_CODE
+            @test occursin("\nError expanding macro\ninvariant broken\n", diagnostic.message)
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.start.character == sizeof("    @m_internal_error ")
+            @test diagnostic.range.var"end".character == sizeof("    @m_internal_error 1")
+        end
+
+        # code generated by a macro is reported at the macro call
+        let diagnostics = get_diagnostics("function g()\n    x = 1\n    @m_gen_internal_error\nend")
+            diagnostic = only(filter(d -> d.code == JETLSCore.LOWERING_INTERNAL_ERROR_CODE, diagnostics))
+            @test diagnostic.range.start.line == 2
+            @test diagnostic.range.start.character == sizeof("    ")
+            @test diagnostic.range.var"end".line == 2
+            @test diagnostic.range.var"end".character == sizeof("    @m_gen_internal_error")
+        end
+    end
+
+    @testset "nested macro expansion error diagnostics for a template from another file" begin
+        diagnostics = get_lowering_diagnostics("x = @m_expand_template\nz = 111111111";
+            code=JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE, context_module=macro_template_module)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Error expanding macro\npreserved variable must be a symbol"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = @m_expand_template")
+
+        # the related information leads to the code in the template
+        diagnostics = get_lowering_diagnostics("x = @m_expand_missing_macro_template";
+            code=JETLSCore.LOWERING_MACRO_EXPANSION_ERROR_CODE, context_module=macro_template_module)
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Macro name `@missing_template_macro` not found"
+        @test diagnostic.range.start.character == sizeof("x = ")
+        @test diagnostic.range.var"end".character == sizeof("x = @m_expand_missing_macro_template")
+        info = only(diagnostic.relatedInformation)
+        @test info.message == "@missing_template_macro"
+        @test endswith(info.location.uri.path, "template.jl")
+        @test info.location.range.start.line == 0
+        @test info.location.range.start.character == 0
+        @test info.location.range.var"end".line == 0
+        @test info.location.range.var"end".character == sizeof("@missing_template_macro")
     end
 
     @testset "nested macro expansion error diagnostics" begin
@@ -2443,6 +2691,24 @@ end
             @test diagnostic.severity == DiagnosticSeverity.Information
             ri = only(something(diagnostic.relatedInformation))
             @test ri.location.range.start.line == 6
+        end
+    end
+
+    @testset "`@with` - use in the dynamic scope" begin
+        let diagnostics = get_lowering_diagnostics("""
+            function f(sv, c)
+                if c
+                    v = 1
+                end
+                Base.ScopedValues.@with sv => v begin
+                    sv[]
+                end
+            end
+            """)
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLSCore.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.message == "Variable `v` may be used before it is defined"
+            @test diagnostic.range.start.line == 4
         end
     end
 end

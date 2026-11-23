@@ -24,6 +24,19 @@ function apply_inlay_hints(code::AbstractString, hints::Vector{InlayHint})
     return JETLSCore.apply_inlay_hints(fi, code, 1, hints)
 end
 
+# Apply the `textEdits` of `hints` to `code`, as a client does when a hint is accepted
+function apply_inlay_hint_text_edits(code::AbstractString, hints::Vector{InlayHint})
+    fi = JETLSCore.FileInfo(1, code, @__FILE__)
+    edits = TextEdit[edit for hint in hints if hint.textEdits !== nothing for edit in hint.textEdits]
+    text = codeunits(code)
+    for edit in sort(edits; by = edit -> JETLSCore.xy_to_offset(fi, edit.range.start), rev = true)
+        first = JETLSCore.xy_to_offset(fi, edit.range.start)
+        last = JETLSCore.xy_to_offset(fi, edit.range.var"end")
+        text = [text[1:first-1]; codeunits(edit.newText); text[last:end]]
+    end
+    return String(text)
+end
+
 function get_syntactic_inlay_hints(
         code::AbstractString;
         range::Union{Range,Nothing} = nothing,
@@ -79,6 +92,25 @@ end
             end #= module TestModule =#
             """
             @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == code
+        end
+
+        for comment in ("# module", " # module")
+            code = """
+            module TestModule
+            x = 1
+            end$comment
+            """
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == code
+        end
+
+        let range = Range(;
+                start = Position(; line = 0, character = 0),
+                var"end" = Position(; line = 2, character = 23))
+            code = "module TestModule\nx = 1\nend"
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code; range)) ==
+                "module TestModule\nx = 1\nend #= module TestModule =#"
+            code = "module TestModule\nx = 1\nend # module TestModule"
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code; range)) == code
         end
 
         @testset "one-liner modules" begin
@@ -286,6 +318,19 @@ end
                 """
                 @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
+
+            let code = """
+                if condition
+                    x = 1
+                end #note
+                """
+                expected = """
+                if condition
+                    x = 1
+                end #= if condition =# #note
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
+            end
         end
 
         @testset "@static if block" begin
@@ -386,6 +431,67 @@ end
                 """
                 @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
+        end
+    end
+
+    @testset "text edits" begin
+        let code = """
+            module M
+                x = 0
+            end; x=1
+            """
+            expected = """
+            module M
+                x = 0
+            end #= module M =#; x=1
+            """
+            hints = get_syntactic_inlay_hints(code)
+            @test apply_inlay_hints(code, hints) == expected
+            @test apply_inlay_hint_text_edits(code, hints) == expected
+        end
+
+        let code = """
+            module Outer
+            module Inner
+            x = 1
+            end
+            end    # some comment
+            """
+            expected = """
+            module Outer
+            module Inner
+            x = 1
+            end #= module Inner =#
+            end #= module Outer =#    # some comment
+            """
+            hints = get_syntactic_inlay_hints(code)
+            @test apply_inlay_hints(code, hints) == expected
+            @test apply_inlay_hint_text_edits(code, hints) == expected
+        end
+
+        let code = """
+            if f(x, #=flag=#true)
+                x = 1
+            end
+            """
+            expected = """
+            if f(x, #=flag=#true)
+                x = 1
+            end #= if f(x, #=flag=#true) =#
+            """
+            @test apply_inlay_hint_text_edits(code, get_syntactic_inlay_hints(code)) == expected
+        end
+
+        # Labels that would break the inserted comment are displayed without `textEdits`
+        for header in ("if occursin(\"#=\", line)", "if s == \"=#\"")
+            code = """
+            $header
+                x = 1
+            end # keep
+            """
+            hint = only(get_syntactic_inlay_hints(code))
+            @test hint.label == "#= $header =#"
+            @test hint.textEdits === nothing
         end
     end
 end

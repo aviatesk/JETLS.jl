@@ -165,6 +165,15 @@ end
     end
 end
 
+@testset "range_lines" begin
+    @test JETLSCore.range_lines(make_range(0, 0, 1, 0)) == "1:1"
+    @test JETLSCore.range_lines(make_range(0, 2, 1, 0)) == "1:1"
+    @test JETLSCore.range_lines(make_range(0, 0, 1, 1)) == "1:2"
+    @test JETLSCore.range_lines(make_range(1, 0, 3, 0)) == "2:3"
+    @test JETLSCore.range_lines(make_range(0, 1, 0, 3)) == "1:1"
+    @test JETLSCore.range_lines(make_range(2, 0, 2, 0)) == "3:3"
+end
+
 @testset "textDocument/rangeFormatting handler" begin
     @static if Sys.iswindows()
         @test_skip "shell-script-backed formatter test is Unix-only"

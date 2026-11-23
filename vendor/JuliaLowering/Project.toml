@@ -14,12 +14,12 @@ BaseSyntax = "bfd32023-066c-5f76-8dc3-939c60a69aeb"
 
 [sources.JuliaSyntax]
 subdir = "vendor/JuliaSyntax"
-rev = "082749e00beb5d9a88b57f80bf543808b6f75168"
+rev = "0342be0571d8537857533bda9fec7545c0c7d39b"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.BaseSyntax]
 subdir = "vendor/BaseSyntax"
-rev = "082749e00beb5d9a88b57f80bf543808b6f75168"
+rev = "0342be0571d8537857533bda9fec7545c0c7d39b"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [targets]

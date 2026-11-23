@@ -1297,10 +1297,11 @@ function report_typeassert_error!(
     length(argtypes) == 2 || return false
     valtyp, asserttyp = argtypes
 
-    expected = CC.instanceof_tfunc(asserttyp, true)[1]
+    expected = CC.instanceof_tfunc(asserttyp, false)[1]
     if expected === Union{}
         actual = CC.widenconst(asserttyp)
         actual === Union{} && return false
+        CC.hasintersect(actual, Type) && return false
         add_new_report!(analyzer, sv.result, TypeAssertErrorReport(sv, Type, actual, offset))
         return true
     end

@@ -637,6 +637,7 @@ const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
 const LOWERING_UNUSED_ASSIGNMENT_CODE = "lowering/unused-assignment"
 const LOWERING_ERROR_CODE = "lowering/error"
 const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
+const LOWERING_INTERNAL_ERROR_CODE = "lowering/internal-error"
 const LOWERING_UNDEF_GLOBAL_VAR_CODE = "lowering/undef-global-var"
 const LOWERING_UNDEF_LOCAL_VAR_CODE = "lowering/undef-local-var"
 const LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE = "lowering/unconstrained-static-parameter"
@@ -683,6 +684,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_UNUSED_ASSIGNMENT_CODE,
     LOWERING_ERROR_CODE,
     LOWERING_MACRO_EXPANSION_ERROR_CODE,
+    LOWERING_INTERNAL_ERROR_CODE,
     LOWERING_UNDEF_GLOBAL_VAR_CODE,
     LOWERING_UNDEF_LOCAL_VAR_CODE,
     LOWERING_UNCONSTRAINED_STATIC_PARAMETER_CODE,
