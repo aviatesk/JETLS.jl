@@ -170,9 +170,10 @@ end
     is_user_lowering_error(err) -> Bool
 
 Return whether `err`, thrown while lowering, reports a problem in the code being lowered,
-i.e. a non-internal `JL.LoweringError` or a `JL.MacroExpansionError` not thrown by JETLS's
-own macro stubs, rather than a bug in JuliaLowering or in JETLS. Callers that give up on
-lowering failures should pass the other errors to [`report_lowering_bug`](@ref).
+i.e. a non-internal `JL.LoweringError` or a `JL.MacroExpansionError` that neither wraps an
+internal `JL.LoweringError` nor is thrown by JETLS's own macro stubs, rather than a bug in
+JuliaLowering or in JETLS. Callers that give up on lowering failures should pass the other
+errors to [`report_lowering_bug`](@ref).
 Must be called within the `catch` block that caught `err`.
 """
 function is_user_lowering_error(@nospecialize err)
@@ -181,8 +182,22 @@ function is_user_lowering_error(@nospecialize err)
         err = err.error
     end
     err isa JL.LoweringError && return !err.internal
-    err isa JL.MacroExpansionError && return !thrown_by_macro_stub(catch_backtrace())
+    if err isa JL.MacroExpansionError
+        inner = innermost_macro_expansion_error(err).err
+        inner isa JL.LoweringError && inner.internal && return false
+        return !thrown_by_macro_stub(catch_backtrace())
+    end
     return false
+end
+
+# A new-style macro that expands its argument, e.g. `@inline`, wraps the errors of that
+# expansion in another `JL.MacroExpansionError`
+function innermost_macro_expansion_error(err::JL.MacroExpansionError)
+    while true
+        inner = err.err
+        inner isa JL.MacroExpansionError || return err
+        err = inner
+    end
 end
 
 # JuliaLowering wraps whatever a new-style macro throws into `JL.MacroExpansionError` while
@@ -202,16 +217,21 @@ function is_macro_stub_frame(frame::Base.StackTraces.StackFrame)
     return length(params) ≥ 2 && params[2] <: BS.MacroContext
 end
 
+# Whether [`report_lowering_bug`](@ref) rethrows in `JETLS_TEST_MODE`. Tests set it to
+# `false` to check what JETLS reports for lowering bugs, e.g. `lowering/internal-error`.
+const __RETHROW_LOWERING_BUGS__ = Base.ScopedValues.ScopedValue{Bool}(true)
+
 """
     report_lowering_bug(err)
 
 Report `err`, a lowering error that is not [`is_user_lowering_error`](@ref): rethrow it in
-`JETLS_TEST_MODE` so that tests catch the bug, and log it in `JETLS_DEV_MODE`.
+`JETLS_TEST_MODE` so that tests catch the bug, unless `__RETHROW_LOWERING_BUGS__` is set to
+`false`, and log it in `JETLS_DEV_MODE`.
 Must be called within the `catch` block that caught `err`.
 """
 function report_lowering_bug(@nospecialize err)
     @static if JETLS_TEST_MODE
-        rethrow()
+        __RETHROW_LOWERING_BUGS__[] && rethrow()
     elseif JETLS_DEV_MODE
         bt = catch_backtrace()
         errmsg = try
@@ -219,7 +239,7 @@ function report_lowering_bug(@nospecialize err)
         catch
             # `showerror` of an internal `JL.LoweringError` may throw while printing the
             # invalid trees it reports
-            err isa JL.LoweringError ? join(err.msgs, '\n') : string(typeof(err))
+            err isa JL.LoweringError ? err.msg : string(typeof(err))
         end
         @warn "Unexpected error in lowering: $errmsg"
         locked_show_backtrace(stderr, bt)

@@ -527,6 +527,8 @@ end
             "B.@inline x",
             "@base_inline x",
             "ThreadsAlias.@spawn x",
+            "GC.@preserve x y",
+            "B.Experimental.@opaque x -> x",
             "T.@test true")
         st0 = jlparse(code; rule=:statement)
         transformed = JETLSCore.remove_macrocalls(new_style_macro_context, world, st0)

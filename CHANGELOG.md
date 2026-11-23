@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`56a6f4a...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/56a6f4a...HEAD)
+- Diff: [`8dbcea0...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8dbcea0...HEAD)
 
 ### Announcement
 
@@ -52,6 +52,79 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
+
+### Added
+
+- Added the [`lowering/internal-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/internal-error) diagnostic, reported with `Information` severity when lowering a statement fails with an internal error of JuliaLowering.jl or JETLS.
+  Most lowering diagnostics for such a statement, e.g. for undefined or unused variables, were silently missing before.
+  Such an error is often caused by invalid code that JuliaLowering.jl does not report properly yet, e.g. a method named `_`:
+  ```julia
+  _(x) = x # now reported at `_`: `expected identifier or BindingId`
+  ```
+  Internal errors during macro expansion, previously reported as [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error), are now reported as this diagnostic too.
+
+### Changed
+
+- [`lowering/macro-expansion-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/macro-expansion-error) diagnostics on syntax errors that a macro reports in its arguments are now shown at the offending argument instead of the whole macro call, and their messages no longer include a copy of the source code:
+  ```julia
+  GC.@preserve 1 x # previously reported on the whole call
+  #            ^ now reported here: `preserved variable must be a symbol`
+  ```
+
+### Fixed
+
+- Fixed false [`inference/type-error/type-assert`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/type-assert) reports on type assertions to `Union{}`, which were reported as if `Union{}` were not a type.
+  Such assertions are no longer reported, since they are a way to tell inference that a code path does not return:
+  ```julia
+  function Base.getproperty(s::S, f::Symbol)
+      f === :x && return Int(getfield(s, :x))
+      getfield(s, f)::Union{} # was reported
+  end
+  ```
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1086)
+
+- Fixed missing lowering diagnostics such as [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var), [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var), and [`lowering/unused-local`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-local) for code inside `Base.ScopedValues.@with`:
+  ```julia
+  function f(c)
+      c && (x = 1)
+      @with sv => x begin # `x` may be undefined: was not reported
+          y = 1           # unused: was not reported
+          undefvar        # undefined: was not reported
+      end
+  end
+  ```
+
+- Fixed false diagnostics in [script analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/modes/script) when a macro reads a top-level `const` whose value JETLS can infer:
+  ```julia
+  const N = 1
+  macro m() N end
+  f() = (@m) + 1 # was reported as `inference/method-error`
+  ```
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/1081 via https://github.com/aviatesk/JET.jl/pull/922)
+
+- Fixed false [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) reports in [script analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/modes/script) on globals referenced as `Main.x`:
+  ```julia
+  global y = 1
+  Main.y # was reported
+  ```
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/1084 via https://github.com/aviatesk/JET.jl/pull/921)
+
+- Fixed false [`toplevel/missing-concretization`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/missing-concretization) diagnostics (or [`toplevel/error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/toplevel/error) on Julia 1.13 and earlier) on `Base.Experimental.@overlay` definitions for a method table created by `Base.Experimental.@MethodTable`, which no longer need a `full_analysis.concretization_patterns` config entry:
+  ```julia
+  Base.Experimental.@MethodTable MT
+  Base.Experimental.@overlay MT sin(x::Float64) = 1.0 # was reported
+  ```
+  An `@overlay` definition for a method table whose value JETLS does not know is now reported as `toplevel/missing-concretization` rather than silently defining an ordinary method.
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/1072 via https://github.com/aviatesk/JET.jl/pull/924)
+
+## 2026-11-20
+
+- Commit: [`8dbcea0`](https://github.com/aviatesk/JETLS.jl/commit/8dbcea0)
+- Diff: [`56a6f4a...8dbcea0`](https://github.com/aviatesk/JETLS.jl/compare/56a6f4a...8dbcea0)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-11-20")'
+  ```
 
 ### Fixed
 

@@ -131,6 +131,13 @@ config structs:
 
 See `./scripts/selfcheck.sh --help` for the project names and other options.
 
+When your environment provides diagnostics from a running JETLS server for
+this repository (e.g. Zed's diagnostics tool, or `lsp_diagnostics` via an
+editor bridge), you may use them for the initial check instead. The server
+tracks edits with Revise and may miss changes to type definitions, global
+bindings, macros, or `include` structure; run `./scripts/selfcheck.sh` for
+such changes or when the diagnostics look stale.
+
 # Running test
 
 Please make sure to test new code when you wrote.
@@ -152,6 +159,15 @@ full language-server interaction coverage.
 
 For detailed test-writing workflows,
 use the [`write-test`](./.agents/skills/write-test/SKILL.md) skill.
+
+# Reviewing code
+
+Keep reviews scoped to the change. For findings about behavior, require a
+realistic triggering input. Findings about project rules, missing tests, or
+design problems must be concrete but do not need a triggering input.
+
+For the detailed review criteria,
+use the [`review`](./.agents/skills/review/SKILL.md) skill.
 
 # Environment-related issues
 
