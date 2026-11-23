@@ -153,6 +153,15 @@ full language-server interaction coverage.
 For detailed test-writing workflows,
 use the [`write-test`](./.agents/skills/write-test/SKILL.md) skill.
 
+# Reviewing code
+
+Keep reviews scoped to the change. For findings about behavior, require a
+realistic triggering input. Findings about project rules, missing tests, or
+design problems must be concrete but do not need a triggering input.
+
+For the detailed review criteria,
+use the [`review`](./.agents/skills/review/SKILL.md) skill.
+
 # Environment-related issues
 
 For AI agents: never modify [`Project.toml`](./Project.toml),
