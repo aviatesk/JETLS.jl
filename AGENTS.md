@@ -131,6 +131,13 @@ config structs:
 
 See `./scripts/selfcheck.sh --help` for the project names and other options.
 
+When your environment provides diagnostics from a running JETLS server for
+this repository (e.g. Zed's diagnostics tool, or `lsp_diagnostics` via an
+editor bridge), you may use them for the initial check instead. The server
+tracks edits with Revise and may miss changes to type definitions, global
+bindings, macros, or `include` structure; run `./scripts/selfcheck.sh` for
+such changes or when the diagnostics look stale.
+
 # Running test
 
 Please make sure to test new code when you wrote.
