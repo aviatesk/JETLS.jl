@@ -83,7 +83,8 @@ const check_help_message = """
                                (error, warn, info, hint; default: warn)
       --show-severity=<level>  Minimum severity to display in output
                                (error, warn, info, hint; default: info)
-      --root=<path>            Set the root path for configuration and relative paths
+      --root=<path>            Set the root path for configuration and relative paths,
+                               and the environment for stdin without --stdin-filename
                                (default: the package directory if exactly one is
                                given, otherwise the current working directory)
       --context-lines=<n>      Number of context lines to show (default: 2)
