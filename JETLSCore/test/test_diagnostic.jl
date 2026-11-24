@@ -39,6 +39,45 @@ using JETLSCore.Glob
             @test all(d -> d.code == JETLSCore.SYNTAX_PARSE_ERROR_CODE, params.diagnostics)
         end
     end
+
+    # nor the syntax errors from lowering the code recovered from them
+    let script_code = """
+        x = 1
+        )
+        y = sin(x)
+        """
+        withscript(script_code) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; writereadmsg)
+                (; raw_res) = writereadmsg(
+                    make_DidOpenTextDocumentNotification(uri, script_code))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test !any(raw_res.params.diagnostics) do d
+                    d.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE
+                end
+            end
+        end
+    end
+
+    # but the syntax errors from lowering code without parse errors are still reported
+    let script_code = """
+        f(x, x) = x
+        y = 1
+        )
+        """
+        withscript(script_code) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; writereadmsg)
+                (; raw_res) = writereadmsg(
+                    make_DidOpenTextDocumentNotification(uri, script_code))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test any(raw_res.params.diagnostics) do d
+                    d.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE &&
+                        d.code == JETLSCore.TOPLEVEL_ERROR_CODE && d.range.start.line == 0
+                end
+            end
+        end
+    end
 end
 
 @testset "syntax warning diagnostics" begin

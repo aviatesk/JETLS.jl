@@ -639,6 +639,20 @@ function has_any_parse_errors(server::Server, execution::AnalysisExecution)
     end
 end
 
+# Analysis of a file with parse errors lowers the code recovered from them, which may fail
+# with a syntax error. JETLS/live reports the parse errors, so this one is not reported.
+function is_parse_error_recovery_report(interp::LSInterpreter, @nospecialize(report))
+    report isa JET.LoweringErrorReport && !isdefined(report, :st) || return false
+    isassigned(interp.current_node) || return false
+    return contains_error_node(interp.current_node[])
+end
+
+function contains_error_node(node::JS.SyntaxNode)
+    JS.is_error(JS.kind(node)) && return true
+    JS.is_leaf(node) && return false
+    return any(contains_error_node, JS.children(node))
+end
+
 function current_analysis_result(manager::AnalysisManager, request::AnalysisRequest)
     info = get_analysis_info(manager, request.uri)
     if info isa AnalysisResult && info.entry == request.entry
@@ -1081,7 +1095,9 @@ function new_analysis_result(
         toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
         jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor;
             markdown_rendering = supports(interp.server, :textDocument, :diagnostic, :markupMessageSupport),
-            displaysize = interp.server.state.cli_mode ? cli_message_displaysize() : nothing)
+            displaysize = interp.server.state.cli_mode ? cli_message_displaysize() : nothing,
+            ignore_toplevel_error_report = is_parse_error_recovery_report(
+                interp, result.res.toplevel_error_report))
         uri2diagnostics
     end
 
