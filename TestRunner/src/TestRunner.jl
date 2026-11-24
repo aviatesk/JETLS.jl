@@ -255,6 +255,16 @@ function _selective_run(interp::TRInterpreter;
     _selective_run(interp, sntop)
 end
 
+# The statement selection relies on the lines that flisp attributes lowered code to, so lower
+# with flisp also where JuliaLowering is the default lowering, as on Julia 1.15
+@static if isdefinedglobal(Base, :fl_lower) &&
+        hasmethod(Base.fl_lower, Tuple{Module,Any,UInt,Bool,LineNumberNode})
+    flisp_lower(mod::Module, @nospecialize(ex)) =
+        Base.fl_lower(mod, ex, typemax(Csize_t), false, LineNumberNode(0, :none))[1]
+else
+    flisp_lower(mod::Module, @nospecialize(ex)) = Meta.lower(mod, ex)
+end
+
 function _selective_run(interp::TRInterpreter, sntop::JS.SyntaxNode)
     vnodes = JS.SyntaxNode[]
     if JS.kind(sntop) == JS.K"toplevel"
@@ -318,7 +328,7 @@ function _selective_run(interp::TRInterpreter, sntop::JS.SyntaxNode)
             expr = attribute_testset_to_call_site(expr::Expr)
 
             expr = Expr(:block, expr, lnn)
-            lwr = Meta.lower(context, expr)
+            lwr = flisp_lower(context, expr)
 
             if !Meta.isexpr(lwr, :thunk)
                 ret = Core.eval(context, lwr)
@@ -347,7 +357,9 @@ function _selective_run(interp::TRInterpreter, sntop::JS.SyntaxNode)
                 # Attribute the code to its line, like `JI.ExprSplitter` does, for `is_matched`
                 expr = Expr(:block, lnn, expr)
             end
-            lwr = Meta.lower(context, expr)
+            # Without lines to select or match, the code runs as lowered by default
+            lwr = isempty(lines) && isempty(test_lines) ? Meta.lower(context, expr) :
+                flisp_lower(context, expr)
 
             if !Meta.isexpr(lwr, :thunk)
                 ret = Core.eval(context, lwr)

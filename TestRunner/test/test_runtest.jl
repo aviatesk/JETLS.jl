@@ -406,6 +406,29 @@ module UnmatchedTestsetsModule end
     @test selected.n_passed == 1
 end
 
+module DefaultLoweringModule end
+# Code that runs without selecting its statements is lowered as by default, not with flisp,
+# whose lowering of a dotted comparison chain needs `&` in the module unlike JuliaLowering's
+if isdefinedglobal(Base, :JuliaLowering) &&
+        getglobal(Core, :_lower) === Base.JuliaLowering.core_lowering_hook
+    @testset "unselected code is lowered by default" begin
+        source = """
+        using Test
+        baremodule Fixture
+        using Base: <=
+        mask(x) = 0 .<= x .<= 1
+        end
+        @testset "selected" begin
+            @test Fixture.mask([0.5, 2.0]) == [true, false]
+        end
+        """
+        filename = joinpath(@__DIR__, "default-lowering.jl")
+        result = @testset "default lowering" runtest(filename, ["selected"]; source,
+                                                     topmodule=DefaultLoweringModule)
+        @test only(result.results).n_passed == 1
+    end
+end
+
 module WrappedTestsModule1 end
 module WrappedTestsModule2 end
 module WrappedTestsModule3 end
