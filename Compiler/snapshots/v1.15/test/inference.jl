@@ -6967,6 +6967,8 @@ fapplicable(; x) = x
 @test only(Base.return_types(gapplicable, (Int,))) === Val{true}
 @test only(Base.return_types(()) do; applicable(); end) === Union{}
 @test only(Base.return_types((Any,)) do x; Val(applicable(x...)); end) == Val
+# an argument type that no object has forms no signature
+@test only(Base.return_types((Some{Union{}},)) do x; applicable(sin, x); end) === Union{}
 @test only(Base.return_types((Tuple{Vararg{Int}},)) do x; Val(applicable(+, 1, 2, x...)); end) == Val # could be improved to Val{true}
 @test only(Base.return_types((Tuple{Vararg{Int}},)) do x; Val(applicable(+, 1, 2, 3, x...)); end) === Val{true}
 @test only(Base.return_types((Int,)) do x; Val(applicable(+, 1, x)); end) === Val{true}
@@ -7271,7 +7273,7 @@ end |> only == Val{true}
 
 # https://github.com/JuliaLang/julia/issues/51310
 @test code_typed() do
-    b{c} = d...
+    b = UnionAll(TypeVar(:c), d...)
 end |> only |> first isa Core.CodeInfo
 
 abstract_call_unionall_vararg(some::Some{Any}) = UnionAll(some.value...)
