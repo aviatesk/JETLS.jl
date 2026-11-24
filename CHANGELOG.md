@@ -53,6 +53,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Note: Path glob patterns use `/` as the separator on all platforms, including Windows; backslashes are not supported as separators.
 
+### Changed
+
+- Updated JETLS for Julia runtimes where JuliaLowering is enabled, as it is by default on Julia 1.15 nightly builds.
+
 ## 2026-11-23
 
 - Commit: [`bfa71ef`](https://github.com/aviatesk/JETLS.jl/commit/bfa71ef)

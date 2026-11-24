@@ -1,10 +1,10 @@
 name = "JETLSCore"
 uuid = "d3d7b685-bb06-4d0a-88d8-0ccf75a29734"
 version = "0.1.0"
-BaseSyntax = "avi/base-syntax-2026-11-23"
-JET = "avi/JET-JETLS-head-2026-11-23"
-JuliaLowering = "avi/base-syntax-2026-11-23"
-JuliaSyntax = "avi/base-syntax-2026-11-23"
+BaseSyntax = "avi/base-syntax-2026-11-24"
+JET = "avi/JET-JETLS-head-2026-11-24"
+JuliaLowering = "avi/base-syntax-2026-11-24"
+JuliaSyntax = "avi/base-syntax-2026-11-24"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
@@ -32,11 +32,11 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestRunner = "4efbe77e-ddf3-4ce7-be91-16409ca9e85f"
 
 [sources]
-BaseSyntax = {rev = "94acadac54", subdir = "BaseSyntax", url = "https://github.com/JuliaLang/julia"}
+BaseSyntax = {rev = "1f8401de67", subdir = "BaseSyntax", url = "https://github.com/JuliaLang/julia"}
 Compiler = {path = "../Compiler"}
-JET = {rev = "35fb892ac5", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "94acadac54", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "94acadac54", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+JET = {rev = "c070b010fd", url = "https://github.com/aviatesk/JET.jl"}
+JuliaLowering = {rev = "1f8401de67", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "1f8401de67", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "../LSP"}
 TOMLSource = {path = "../TOMLSource"}
 TestRunner = {path = "../TestRunner"}
@@ -45,7 +45,7 @@ TestRunner = {path = "../TestRunner"}
 BaseSyntax = "0.1"
 Compiler = "0.1.1"
 Glob = "1.4"
-JET = "0.13.2"
+JET = "0.13.4"
 JuliaLowering = "1"
 JuliaSyntax = "2"
 LSP = "0.1"
