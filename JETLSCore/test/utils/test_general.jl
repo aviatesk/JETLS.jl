@@ -121,9 +121,10 @@ noncapturing_closure() = x -> x + 1
     @test JETLSCore.is_closure_type(typeof(noncapturing_closure()))
     @test !JETLSCore.is_closure_type(typeof(sin))
     @test !JETLSCore.is_closure_type(typeof(func_with_keyword))
-    # the keyword body of `func_with_keyword`
+    # the keyword body of `func_with_keyword`, named `#func_with_keyword#kw_body#N` by
+    # JuliaLowering and `#func_with_keyword#N` by flisp
     let name = only(name for name in names(@__MODULE__; all = true)
-                    if occursin(r"^#func_with_keyword#\d+$", String(name)))
+                    if occursin(r"^#func_with_keyword#(?:kw_body#)?\d+$", String(name)))
         @test !JETLSCore.is_closure_type(typeof(getglobal(@__MODULE__, name)))
     end
     @test !JETLSCore.is_closure_type(Int)
