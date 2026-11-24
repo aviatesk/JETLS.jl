@@ -153,8 +153,21 @@ h(x) = sin("julia")    # reported regardless of `x`
 ```
 
 Errors that depend on the types of the arguments without declared types, such
-as the one in `f("julia")`, are reported only through
+as the one in `f("42")`, are reported only through
 [call-site inference](@ref analysis/full/inference/call-site).
+
+This holds even when the error occurs inside a function that the argument
+is passed to. For example, `findlast` calls the predicate with `Bool`s when
+the collection is a `BitArray`, so `x.exception` below fails if `stack` is a
+`BitArray`:
+
+```@diagnostics; codes = ["inference/field-error"]
+# not reported: `stack` has no declared type
+last_error(stack) = findlast(x -> x.exception isa ErrorException, stack)
+# reported: the declared type `AbstractVector` includes `BitVector`
+last_error_vec(stack::AbstractVector) =
+    findlast(x -> x.exception isa ErrorException, stack)
+```
 
 #### [Call-site inference](@id analysis/full/inference/call-site)
 

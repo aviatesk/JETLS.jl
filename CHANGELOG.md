@@ -82,6 +82,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed false `inference/*` diagnostics, such as [`inference/field-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/field-error), for errors that occur only in a method for some types of an argument without a declared type, when the call also matches a method for the argument of any type:
+  ```julia
+  # `findlast` calls the predicate with `Bool`s only for a `BitArray`
+  last_argument_error(stack) = findlast(x -> x.exception isa ArgumentError, stack) # was reported: type `Bool` has no field `exception`
+  ```
+  Such errors are now reported only through calls with arguments of the types, e.g. `last_argument_error(trues(2))`.
+  Errors for the declared types of arguments are still reported, e.g. with `stack::AbstractVector`, since a `BitVector` is an `AbstractVector`.
+  See [Signature analysis](https://aviatesk.github.io/JETLS.jl/release/analysis/#analysis/full/inference/signature) for details.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/1018)
+
 - Fixed false [`inference/type-error/type-assert`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/type-error/type-assert) reports on type assertions to `Union{}`, which were reported as if `Union{}` were not a type.
   Such assertions are no longer reported, since they are a way to tell inference that a code path does not return:
   ```julia
