@@ -410,7 +410,7 @@ function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiag
     relatedInformation = DiagnosticRelatedInformation[]
     for info in @something diagnostic.relatedInformation return nothing
         filename = stackframe_filename(info.filename)
-        filename == "none" && continue
+        is_unknown_file(filename) && continue
         uri = to_valid_uri(filename)
         range = line_range(info.line)
         location = Location(; uri, range)
