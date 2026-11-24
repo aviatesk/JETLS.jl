@@ -360,10 +360,11 @@ function jet_result_to_diagnostics!(
         uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult,
         world::UInt, postprocessor::JET.PostProcessor;
         markdown_rendering::Bool = false,
-        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing
+        displaysize::Union{Nothing,Tuple{Int,Int}} = nothing,
+        ignore_toplevel_error_report::Bool = false
     )
     report = result.res.toplevel_error_report
-    if report !== nothing && report.file != "none"
+    if report !== nothing && report.file != "none" && !ignore_toplevel_error_report
         diagnostic = jet_toplevel_error_report_to_diagnostic(report, world, postprocessor;
             markdown_rendering, displaysize)
         diagnostic === nothing || push!(uri2diagnostics[to_valid_uri(report.file)], diagnostic)
