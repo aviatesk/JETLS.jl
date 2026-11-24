@@ -288,15 +288,20 @@ end
 # information
 stackframe_filename(file::AbstractString) = chopprefix(file, "." * Base.Filesystem.path_separator)
 
+# The file of code without location information, e.g. a method defined by evaluating an `Expr`
+# without line numbers, is `none` when lowered by flisp and empty when lowered by JuliaLowering
+is_unknown_file(file::Symbol) = file === :none || file === Symbol("")
+is_unknown_file(filename::AbstractString) = filename == "none" || isempty(filename)
+
 function jet_frame_to_location(frame)
-    frame.file === :none && return nothing
+    is_unknown_file(frame.file) && return nothing
     return Location(;
         uri = something(jet_frame_to_uri(frame)),
         range = jet_frame_to_range(frame))
 end
 
 function jet_frame_to_uri(frame)
-    frame.file === :none && return nothing
+    is_unknown_file(frame.file) && return nothing
     return to_valid_uri(String(frame.file))
 end
 
@@ -602,7 +607,7 @@ function jet_inference_error_reports_to_diagnostics!(
         diagnostic = jet_inference_error_report_to_diagnostic(report, world, postprocessor)
         topframeidx = first(inference_error_report_stack(report))
         topframe = report.vst[topframeidx]
-        topframe.file === :none && continue # TODO Figure out why this is necessary
+        is_unknown_file(topframe.file) && continue # TODO Figure out why this is necessary
         uri = jet_frame_to_uri(topframe)
         push!(uri2diagnostics[uri], diagnostic) # collect_displayable_reports asserts that this `uri` key exists for `uri2diagnostics`
     end
@@ -865,7 +870,7 @@ function stacktrace_to_related_information(
     relatedInformation = DiagnosticRelatedInformation[]
     for stackframe in stacktrace
         filename = stackframe_filename(String(stackframe.file))
-        filename == "none" && continue
+        is_unknown_file(filename) && continue
         uri = to_valid_uri(filename)
         range = line_range(stackframe.line)
         location = Location(; uri, range)
