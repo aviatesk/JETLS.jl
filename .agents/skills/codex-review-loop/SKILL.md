@@ -26,7 +26,9 @@ Extra review focus from the user, if any: $ARGUMENTS
 
 ## Rules
 
-- Codex runs read-only. Never let it edit files.
+- Codex must not modify the git worktree and should avoid writing files
+  elsewhere too. Writes that the commands it needs to run cannot avoid, such
+  as `julia` updating `~/.julia/compiled`, are acceptable.
 - Codex can be wrong. Verify every finding against the code before acting on it.
   Reject findings that are incorrect or conflict with the user's instructions
   or project rules, and say why.
@@ -43,6 +45,19 @@ Extra review focus from the user, if any: $ARGUMENTS
 - A run counts as a completed review only if it exits with 0 and the first
   line of its output is a `VERDICT:` line. If `codex` is not found, fails,
   or gives no verdict, stop and tell the user instead of working around it.
+- If a run prints `WORKTREE CHANGED`, Codex modified the worktree. Stop and
+  tell the user; do not revert anything yourself.
+
+## Sandbox
+
+Outside Claude Code's sandbox, Codex runs in its own read-only sandbox
+(`-s read-only`). Inside Claude Code's sandbox, which sets `SANDBOX_RUNTIME`,
+Codex cannot create one, because the operating system does not nest
+sandboxes. There, run Codex with `--dangerously-bypass-approvals-and-sandbox`
+so that Claude Code's sandbox confines it instead. Codex then needs write
+access to `~/.codex` and network access to OpenAI; if it fails under the
+sandbox, stop and tell the user what was denied. The commands below choose
+the mode and check that the worktree did not change during the run.
 
 ## Round 1
 
@@ -52,10 +67,18 @@ message; the full log goes to a file.
 
 ```bash
 log=$(mktemp "${TMPDIR:-/tmp}/codex-review.XXXXXX") || exit 1
-codex exec -s read-only - 2> "$log" <<'EOF'
+if [ -n "$SANDBOX_RUNTIME" ]; then
+  mode=(--dangerously-bypass-approvals-and-sandbox)
+else
+  mode=(-s read-only)
+fi
+fp() { { git status --porcelain=v1 -uall; git diff --binary HEAD; } | git hash-object --stdin; }
+before=$(fp)
+codex exec "${mode[@]}" - 2> "$log" <<'EOF'
 <prompt>
 EOF
 rc=$?
+[ "$(fp)" = "$before" ] || { echo "WORKTREE CHANGED during the Codex run"; rc=99; }
 echo "exit=$rc session=$(sed -n 's/^session id: //p' "$log") log=$log"
 exit "$rc"
 ```
@@ -111,13 +134,21 @@ apply fixes before making any.
 ## Round 2 and later
 
 Resume the same session so Codex keeps its context. `resume` does not
-inherit the read-only sandbox, so pass it explicitly.
+inherit the sandbox mode, so pass it again.
 
 ```bash
-codex exec resume -c sandbox_mode=read-only <session-id> - 2>> <log> <<'EOF'
+if [ -n "$SANDBOX_RUNTIME" ]; then
+  mode=(--dangerously-bypass-approvals-and-sandbox)
+else
+  mode=(-c sandbox_mode=read-only)
+fi
+fp() { { git status --porcelain=v1 -uall; git diff --binary HEAD; } | git hash-object --stdin; }
+before=$(fp)
+codex exec resume "${mode[@]}" <session-id> - 2>> <log> <<'EOF'
 <prompt>
 EOF
 rc=$?
+[ "$(fp)" = "$before" ] || { echo "WORKTREE CHANGED during the Codex run"; rc=99; }
 echo "exit=$rc"
 exit "$rc"
 ```
