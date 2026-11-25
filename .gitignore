@@ -10,5 +10,10 @@ docs/src/CHANGELOG.md
 .JETLSProfile
 .JETLS_REVISE
 
+# Claude Code: personal files (shared ones such as .claude/skills are tracked)
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
+
 # The following line is negated on release branches
 /vendor
