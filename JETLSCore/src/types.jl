@@ -1062,6 +1062,8 @@ struct PerFileDiagnosticsCacheEntry
 end
 const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsCacheEntry}
 const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}
+const LoweringUndefGlobalsData = Base.PersistentDict{URI,Set{String}}
+const LoweringUndefGlobals = LWContainer{LoweringUndefGlobalsData, LWStats}
 # Deprecations of global names, per world; see `find_deprecated_global!` and
 # `find_deprecated_function!`
 struct DeprecatedBindingWorldCache
@@ -1154,6 +1156,9 @@ mutable struct ServerState
     const document_symbol_cache::DocumentSymbolCache
     const binding_occurrences_cache::BindingOccurrencesCache
     const per_file_diagnostics_cache::PerFileDiagnosticsCache
+    # The `lowering/undef-global-var` messages of each file as of its last full analysis,
+    # which hide the `inference/undef-global-var` diagnostics with the same messages.
+    const lowering_undef_globals::LoweringUndefGlobals
     # Cleared by `update_analysis_cache!`, since the entries hold the analyzed modules.
     const deprecated_binding_cache::DeprecatedBindingCache
     const text_document_content_cache::TextDocumentContentCache
@@ -1191,6 +1196,7 @@ mutable struct ServerState
             #=document_symbol_cache=# DocumentSymbolCache(),
             #=binding_occurrences_cache=# BindingOccurrencesCache(),
             #=per_file_diagnostics_cache=# PerFileDiagnosticsCache(),
+            #=lowering_undef_globals=# LoweringUndefGlobals(),
             #=deprecated_binding_cache=# DeprecatedBindingCache(),
             #=text_document_content_cache=# TextDocumentContentCache(),
             #=analysis_manager=# AnalysisManager(),

@@ -57,6 +57,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Updated JETLS for Julia runtimes where JuliaLowering is enabled, as it is by default on Julia 1.15 nightly builds.
 
+- [`inference/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/undef-global-var) is no longer reported for an undefined variable that [`lowering/undef-global-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-global-var) reports in the same file, so the same problem is no longer reported both at the variable and on its whole line.
+  `inference/undef-global-var` is still reported when, under [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns), `lowering/undef-global-var` is turned off or has a lower severity than `inference/undef-global-var`.
+
 ## 2026-11-23
 
 - Commit: [`bfa71ef`](https://github.com/aviatesk/JETLS.jl/commit/bfa71ef)

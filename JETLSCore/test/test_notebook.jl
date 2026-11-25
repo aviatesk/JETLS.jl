@@ -240,7 +240,8 @@ end
                 writemsg(make_DidChangeNotebookDocumentNotification(notebook_uri, change; version = 5))
             end
 
-            # 8. Send DidSave and wait for PublishDiagnosticsNotification with `undefhello` error
+            # 8. Send DidSave: full analysis reports `undefhello`, but leaves it to
+            # `lowering/undef-global-var` in cell 3
             # read=3: PublishDiagnosticsNotification is sent for all 3 code cells (markdown ignored)
             let (; raw_res) = writereadmsg(make_DidSaveNotebookDocumentNotification(notebook_uri); read = 3)
                 @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
@@ -252,10 +253,20 @@ end
                     end
                 end
                 @test cell3_notification !== nothing
-                @test any(cell3_notification.params.diagnostics) do diag
-                    diag.source == JETLSCore.DIAGNOSTIC_SOURCE_SAVE &&
+                @test !any(diag -> occursin("undefhello", diag.message), cell3_notification.params.diagnostics)
+            end
+            let analysis_result = JETLSCore.get_analysis_info(server.state.analysis_manager, notebook_uri)
+                @test any(analysis_result.uri2diagnostics[notebook_uri]) do diag
+                    diag.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE &&
                     occursin("undefhello", diag.message)
                 end
+            end
+            let diagnostics = scan_live_diagnostics!(server, readmsg)[cell3_uri].diagnostics
+                @test any(diagnostics) do diag
+                    diag.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE &&
+                    occursin("undefhello", diag.message)
+                end
+                @test !any(diag -> diag.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics)
             end
 
             # Verify state after steps 6 and 7: 4 cells total, but only 3 code cells in concat
@@ -739,7 +750,7 @@ end
         cell_uri = make_cell_uri(tempdir, 1)
         withserver() do (; server, writereadmsg)
             cells = NotebookCell[NotebookCell(; kind = NotebookCellKind.Code, document = cell_uri)]
-            cell_texts = Dict{URI,String}(cell_uri => "x = undefvar + 1\n")
+            cell_texts = Dict{URI,String}(cell_uri => "x = Base.undefvar + 1\n")
             (; raw_res) = writereadmsg(
                 make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts))
             @test raw_res isa PublishDiagnosticsNotification

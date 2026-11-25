@@ -3282,12 +3282,86 @@ function toplevel_lowering_diagnostics!(
     return diagnostics
 end
 
+# `lowering/undef-global-var` reports what `inference/undef-global-var` reports at exact
+# ranges, so `get_full_diagnostics` hides the latter when the live diagnostics of the file
+# had the same message as the full analysis completed, unless, under the configuration, the
+# former is off or less severe than the latter. Unlike the current live diagnostics, these
+# messages keep hiding diagnostics fixed before the next save, and also serve clients that
+# pull live diagnostics.
+function update_lowering_undef_globals!(server::Server, analysis_result::AnalysisResult)
+    state = server.state
+    def_used_names_cache = DefUsedNamesCache()
+    updates = Pair{URI,Set{String}}[]
+    for (uri, diagnostics) in analysis_result.uri2diagnostics
+        messages = Set{String}()
+        if any(d::Diagnostic -> d.code == INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics)
+            fi = if is_synchronized(state, uri)
+                get_file_info(state, uri)
+            else
+                get_unsynced_file_info!(state, uri)
+            end
+            if fi !== nothing
+                for diagnostic in compute_live_diagnostics!(
+                        def_used_names_cache, server, uri, fi, #=snapshot=#nothing, DUMMY_CANCEL_FLAG)
+                    diagnostic.code == LOWERING_UNDEF_GLOBAL_VAR_CODE || continue
+                    push!(messages, get_raw_message(diagnostic))
+                end
+            end
+        end
+        push!(updates, uri => messages)
+    end
+    analysis_cache = load(state.analysis_manager.cache)
+    store!(state.lowering_undef_globals) do data::LoweringUndefGlobalsData
+        for (uri, messages) in updates
+            data = LoweringUndefGlobalsData(data, uri => messages)
+        end
+        new_data = data
+        for (uri, messages) in data
+            if isempty(messages) || !(get(analysis_cache, uri, nothing) isa AnalysisResult)
+                new_data = Base.delete(new_data, uri)
+            end
+        end
+        return new_data, nothing
+    end
+end
+
+function append_full_diagnostics!(
+        diagnostics::Vector{Diagnostic}, state::ServerState, uri::URI,
+        full_diagnostics::Vector{Diagnostic}, lowering_undef_globals::LoweringUndefGlobalsData
+    )
+    messages = get(lowering_undef_globals, uri, nothing)
+    messages === nothing && return append!(diagnostics, full_diagnostics)
+    root_path = isdefined(state, :root_path) ? state.root_path : nothing
+    for diagnostic in full_diagnostics
+        if diagnostic.code == INFERENCE_UNDEF_GLOBAL_VAR_CODE && get_raw_message(diagnostic) in messages
+            lowering_diagnostic = Diagnostic(diagnostic; code = LOWERING_UNDEF_GLOBAL_VAR_CODE)
+            lowering_severity = configured_severity(lowering_diagnostic, state.config_manager, uri, root_path)
+            inference_severity = configured_severity(diagnostic, state.config_manager, uri, root_path)
+            if (lowering_severity !== nothing &&
+                (inference_severity === nothing || lowering_severity <= inference_severity))
+                continue
+            end
+        end
+        push!(diagnostics, diagnostic)
+    end
+    return diagnostics
+end
+
+function configured_severity(
+        diagnostic::Diagnostic, manager::ConfigManager, uri::URI, root_path::Union{Nothing,String}
+    )
+    applied = _apply_diagnostic_config(diagnostic, manager, uri, root_path)
+    applied === missing && return nothing
+    return something(applied, diagnostic).severity::DiagnosticSeverity.Ty
+end
+
 # textDocument/publishDiagnostics
 # ===============================
 
 function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = false)
     state = server.state
     uri2diagnostics = URI2Diagnostics()
+    lowering_undef_globals = load(state.lowering_undef_globals)
     for (uri, analysis_info) in load(state.analysis_manager.cache)
         if analysis_info isa OutOfScope
             reason = @something analysis_info.skip_reason continue
@@ -3299,7 +3373,7 @@ function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = 
         analysis_result = analysis_info
         full_diagnostics = get(analysis_result.uri2diagnostics, uri, nothing)
         if full_diagnostics !== nothing
-            append!(diagnostics, full_diagnostics)
+            append_full_diagnostics!(diagnostics, state, uri, full_diagnostics, lowering_undef_globals)
         end
     end
     merge_extra_diagnostics!(uri2diagnostics, server)
@@ -3324,6 +3398,7 @@ function get_full_diagnostics(server::Server, uris::Set{URI})
         end
     end
     analysis_cache = load(state.analysis_manager.cache)
+    lowering_undef_globals = load(state.lowering_undef_globals)
     extra_diagnostics = load(state.extra_diagnostics)
     published = load(state.workspace_diagnostics_worker.published)
     pull = pull_diagnostics_enabled(server)
@@ -3333,7 +3408,8 @@ function get_full_diagnostics(server::Server, uris::Set{URI})
         analysis_info = get(analysis_cache, uri, nothing)
         if analysis_info isa AnalysisResult
             full_diagnostics = get(analysis_info.uri2diagnostics, uri, nothing)
-            full_diagnostics === nothing || append!(diagnostics, full_diagnostics)
+            full_diagnostics === nothing ||
+                append_full_diagnostics!(diagnostics, state, uri, full_diagnostics, lowering_undef_globals)
         elseif analysis_info isa OutOfScope
             reason = analysis_info.skip_reason
             if reason !== nothing
