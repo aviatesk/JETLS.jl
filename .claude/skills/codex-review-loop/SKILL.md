@@ -33,7 +33,7 @@ Extra review focus from the user, if any: $ARGUMENTS
   Reject findings that are incorrect or conflict with the user's instructions
   or project rules, and say why.
 - Codex tends to flag edge cases that are possible only in theory. Judge each
-  finding by the criteria of the [`review`](../review/SKILL.md) skill, and
+  finding by the criteria of the [`review`](../../../.agents/skills/review/SKILL.md) skill, and
   accept an edge case only after confirming that its triggering input is
   realistic by those criteria and actually reaches the code in question.
   Reject findings whose input is not realistic instead of complicating
@@ -95,7 +95,7 @@ Codex reads `AGENTS.md` itself, so do not restate project rules.
   files), or the commits the user asked to review, focusing on this
   milestone's files; the rest of the diff is context only.
 - What to look for: correctness bugs, design problems, and missing tests,
-  following the criteria of the [`review`](../review/SKILL.md) skill.
+  following the criteria of the [`review`](../../../.agents/skills/review/SKILL.md) skill.
   No style nits unless they matter. Do not modify any files.
 - Any extra focus from the user.
 - This output contract:
