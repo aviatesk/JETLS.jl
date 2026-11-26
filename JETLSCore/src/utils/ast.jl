@@ -78,7 +78,7 @@ mutability flag of a `:struct`), as opposed to a literal written in the source.
 """
 function is_synthesized_value(st::SyntaxTree)
     JS.head(st) === :value || return false
-    st.value isa Union{Nothing,LineNumberNode,JL.MacroSource} && return true
+    st.value isa Union{Nothing,LineNumberNode} && return true
     textref = BS.prov_end(st)
     # values converted from `Expr` (e.g. old-style macro output) only carry line info
     textref.source isa BS.SourceRef || return true
