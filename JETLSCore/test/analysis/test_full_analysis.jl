@@ -1015,14 +1015,18 @@ end
         withserver(; rootUri = filepath2uri(dir)) do (; server, writereadmsg, readmsg)
             manager = server.state.analysis_manager
             utils_entry = JETLSCore.ScriptAnalysisEntry(utils_uri)
+            # `lowering/undef-global-var` hides the undefined `factor` of full analysis from
+            # the published diagnostics
+            utils_diagnostics() =
+                JETLSCore.get_analysis_info(manager, utils_uri).uri2diagnostics[utils_uri]
 
             # opened first, `utils.jl` is analyzed alone, without what `main.jl` defines
             let (; raw_res) = writereadmsg(
                     make_DidOpenTextDocumentNotification(utils_uri, utils_code))
                 @test raw_res isa PublishDiagnosticsNotification
                 @test raw_res.params.uri == utils_uri
-                @test any(mentions("factor"), raw_res.params.diagnostics)
             end
+            @test any(mentions("factor"), utils_diagnostics())
             standalone = JETLSCore.get_analysis_info(manager, utils_uri)::JETLSCore.AnalysisResult
             standalone_scaled = let mod = JETLSCore.get_context_module(
                     standalone, utils_uri, Position(; line=0, character=0))
@@ -1034,6 +1038,7 @@ end
                     make_DidOpenTextDocumentNotification(main_uri, main_code); read=2)
                 @test !any(mentions("factor"), published_diagnostics(raw_res, utils_uri))
             end
+            @test !any(mentions("factor"), utils_diagnostics())
             # the unit that `utils.jl` formed alone is gone
             @test !haskey(JETLSCore.load(manager.tracked_entries), utils_entry)
             @test !haskey(JETLSCore.load(manager.analyzed_generations), utils_entry)
@@ -1048,10 +1053,10 @@ end
                     params = DidSaveTextDocumentParams(;
                         textDocument = TextDocumentIdentifier(; uri = utils_uri),
                         text = new_utils_code)); read=2)
-                diagnostics = published_diagnostics(raw_res, utils_uri)
-                @test !any(mentions("factor"), diagnostics)
-                @test any(mentions("offset"), diagnostics)
+                @test !any(mentions("factor"), published_diagnostics(raw_res, utils_uri))
             end
+            @test !any(mentions("factor"), utils_diagnostics())
+            @test any(mentions("offset"), utils_diagnostics())
 
             # a configuration change reanalyzes the unit from `main.jl`, but not the unit
             # that `utils.jl` formed alone, which would take `utils.jl` back
@@ -1063,6 +1068,7 @@ end
             let (; raw_msg) = readmsg(; read=2)
                 @test !any(mentions("factor"), published_diagnostics(raw_msg, utils_uri))
             end
+            @test !any(mentions("factor"), utils_diagnostics())
             @test JETLSCore.get_analysis_info(manager, utils_uri).entry == JETLSCore.ScriptAnalysisEntry(main_uri)
         end
     end
@@ -1106,7 +1112,7 @@ end
     withpackage(pkgname, pkgcode) do pkgpath
         pkg_path = joinpath(pkgpath, "src", "$pkgname.jl")
         orphan_path = joinpath(pkgpath, "src", "orphan.jl")
-        orphan_code = "orphan() = undefined_in_orphan()\n"
+        orphan_code = "orphan() = Base.undefined_in_orphan()\n"
         write(orphan_path, orphan_code)
         pkg_uri = filepath2uri(pkg_path)
         orphan_uri = filepath2uri(orphan_path)

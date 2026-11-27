@@ -578,6 +578,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     end
     cache_unincluded_files!(server.state, request, analysis_result, prev_result)
     mark_analyzed_generation!(manager, request)
+    update_lowering_undef_globals!(server, analysis_result)
     request.notify_diagnostics && notify_diagnostics!(server)
     notify_pruned_uris!(server, request, pruned_uris)
     # Top-level errors can skip signature analysis and its intermediate context refresh.

@@ -532,7 +532,7 @@ end
         marker = joinpath(dir, "executed")
         filepath = write_test_file(dir, "main.jl", """
             include("excluded.jl")
-            after() = undefined_after()
+            after() = Base.undefined_after()
             """)
         write_test_file(dir, "excluded.jl", "@eval write($(repr(marker)), \"excluded\")")
         write_config_file(dir, """
@@ -703,6 +703,7 @@ end
             x = 1
             return undefined_name
         end
+        qualified() = Base.undefined_name
         """
 
     mktempdir() do dir
@@ -716,6 +717,8 @@ end
         let result = run_jetls_check(["-"]; root=dir, input, skip_analysis=false)
             @test result.exitcode == 1
             @test occursin("# @ <stdin>:3,12", result.stdout)
+            @test !occursin("# @ <stdin>:3,1\n", result.stdout)
+            @test occursin("# @ <stdin>:5,1\n", result.stdout)
             @test occursin("inference/undef-global-var", result.stdout)
         end
 
@@ -755,7 +758,7 @@ end
             """)
         write_test_file(srcdir, "sub.jl", "sub() = 1\n")
         result = run_jetls_check(["--stdin-filename=src/sub.jl", "-"];
-            root=pkgdir, input="sub() = undefined_name\n", skip_analysis=false)
+            root=pkgdir, input="sub() = SomePkg.undefined_name\n", skip_analysis=false)
         @test result.exitcode == 1
         @test occursin("# @ src/sub.jl:1,1", result.stdout)
         @test occursin("`SomePkg.undefined_name` is not defined [warn:inference/undef-global-var]", result.stdout)

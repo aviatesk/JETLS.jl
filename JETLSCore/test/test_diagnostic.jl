@@ -621,12 +621,15 @@ end
         module BadModule
             using ..TestPackageAnalysis: Hello
             function badhello1(x::Hello)
-                return "Hello, \$(y.who)"  # `TestPackageAnalysis.BadModule.y` is not defined (JETLS inference/undef-global-var)
+                return "Hello, \$(BadModule.y.who)"  # `TestPackageAnalysis.BadModule.y` is not defined (JETLS inference/undef-global-var)
             end
             function badhello2(x::Hello)
                 return _badhello2(x.who)  # no matching method found `_badhello2(::String)` (JETLS inference/method-error)
             end
             _badhello2(x::Hello) = "Hello, \$(x.who)"
+            function badhello3(x::Hello)
+                return "Hello, \$(z.who)"  # `TestPackageAnalysis.BadModule.z` is not defined (JETLS lowering/undef-global-var)
+            end
         end
 
         end # module TestPackageAnalysis
@@ -634,11 +637,21 @@ end
         rootUri = filepath2uri(pkg_path)
         src_path = normpath(pkg_path, "src", "TestPackageAnalysis.jl")
         uri = filepath2uri(src_path)
-        withserver(; rootUri) do (; writereadmsg)
+        withserver(; rootUri) do (; server, writereadmsg)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
 
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
+
+            # `inference/undef-global-var` is not published for the unqualified reference
+            # that `lowering/undef-global-var` reports
+            let message = "`TestPackageAnalysis.BadModule.z` is not defined"
+                analysis_result = JETLSCore.get_analysis_info(server.state.analysis_manager, uri)
+                @test any(analysis_result.uri2diagnostics[uri]) do diag
+                    diag.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE && diag.message == message
+                end
+                @test !any(diag -> diag.message == message, raw_res.params.diagnostics)
+            end
 
             found_diagnostic1 = found_diagnostic2 = false
             for diag in raw_res.params.diagnostics
@@ -657,6 +670,65 @@ end
             end
             @test found_diagnostic1
             @test found_diagnostic2
+        end
+    end
+end
+
+@testset "`inference/undef-global-var` hidden by `lowering/undef-global-var`" begin
+    script_code = """
+    function multi_line()
+        x = sin(
+            undefined_a)
+        return x
+    end
+    qualified() = Base.undefined_b
+    """
+    withscript(script_code) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server, writemsg, writereadmsg, readmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            let diagnostic = only(filter(raw_res.params.diagnostics) do d
+                    d.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE
+                end)
+                @test occursin("Base.undefined_b", diagnostic.message)
+            end
+            let diagnostics = scan_live_diagnostics!(server, readmsg)[uri].diagnostics
+                diagnostic = only(filter(diagnostics) do d
+                    d.code == JETLSCore.LOWERING_UNDEF_GLOBAL_VAR_CODE
+                end)
+                @test occursin("undefined_a", diagnostic.message)
+                @test diagnostic.range.start.line == 2
+                @test count(d -> d.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics) == 1
+            end
+
+            # fixing the code without saving it does not bring the hidden diagnostic back
+            fixed_code = replace(script_code, "undefined_a" => "1.0")
+            writemsg(make_DidChangeTextDocumentNotification(uri, fixed_code, #=version=#2))
+            wait_for_file_cache_version(server.state, uri, 2)
+            let diagnostics = scan_live_diagnostics!(server, readmsg)[uri].diagnostics
+                @test !any(d -> occursin("undefined_a", d.message), diagnostics)
+                @test count(d -> d.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics) == 1
+            end
+        end
+    end
+
+    # unless the configuration turns `lowering/undef-global-var` off or makes it less severe
+    for (pattern, match_type, severity) in (
+            ("lowering/undef-global-var", "literal", "off"),
+            ("lowering/.*", "regex", "hint"))
+        withscript(script_code) do script_path
+            settings = Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => pattern,
+                            "match_by" => "code",
+                            "match_type" => match_type,
+                            "severity" => severity)
+                    ]))
+            diagnostics = get_open_diagnostics(dirname(script_path), script_path, script_code; settings)
+            @test count(d -> d.code == JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics) == 2
         end
     end
 end
@@ -2133,6 +2205,40 @@ function make_test_manager(config_dict::Dict{String,Any})
     lsp_config = JETLSCore.parse_config_from_dict(JETLSCore.JETLSConfig, config_dict)
     data = JETLSCore.ConfigManagerData(JETLSCore.EMPTY_CONFIG, lsp_config, nothing, true)
     return JETLSCore.ConfigManager(data)
+end
+
+function is_hidden_by_lowering(patterns::Vector{Dict{String,Any}})
+    state = JETLSCore.ServerState()
+    manager = make_test_manager(Dict{String,Any}("diagnostic" => Dict{String,Any}("patterns" => patterns)))
+    JETLSCore.store!(state.config_manager) do _
+        JETLSCore.load(manager), nothing
+    end
+    uri = filepath2uri("/tmp/test.jl")
+    message = "`Main.undefined_x` is not defined"
+    diagnostic = make_test_diagnostic(;
+        code = JETLSCore.INFERENCE_UNDEF_GLOBAL_VAR_CODE,
+        severity = DiagnosticSeverity.Warning,
+        message)
+    lowering_undef_globals = JETLSCore.LoweringUndefGlobalsData(
+        JETLSCore.LoweringUndefGlobalsData(), uri => Set([message]))
+    diagnostics = JETLSCore.append_full_diagnostics!(
+        Diagnostic[], state, uri, [diagnostic], lowering_undef_globals)
+    return isempty(diagnostics)
+end
+
+@testset "`inference/undef-global-var` hidden according to configured severities" begin
+    code_pattern(pattern, severity; match_type = "literal") = Dict{String,Any}(
+        "pattern" => pattern,
+        "match_by" => "code",
+        "match_type" => match_type,
+        "severity" => severity)
+    @test is_hidden_by_lowering(Dict{String,Any}[])
+    @test !is_hidden_by_lowering([code_pattern("lowering/undef-global-var", "off")])
+    @test !is_hidden_by_lowering([code_pattern("lowering/.*", "hint"; match_type = "regex")])
+    @test is_hidden_by_lowering([code_pattern("lowering/undef-global-var", "error")])
+    @test is_hidden_by_lowering([code_pattern("inference/.*", "info"; match_type = "regex")])
+    @test !is_hidden_by_lowering([code_pattern("inference/undef-global-var", "error")])
+    @test is_hidden_by_lowering([code_pattern(".*", "hint"; match_type = "regex")])
 end
 
 @testset HierarchicalTestSet "diagnostic configuration" begin

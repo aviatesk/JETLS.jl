@@ -428,7 +428,8 @@ end
 This diagnostic detects simple undefined global variable references. For more
 comprehensive detection (including qualified references like `Base.undefvar`),
 see [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)
-(source: `JETLS/save`).
+(source: `JETLS/save`), which is not reported for the variables that this
+diagnostic reports.
 
 #### [Undefined local variable (`lowering/undef-local-var`)](@id diagnostic/reference/lowering/undef-local-var)
 
@@ -1639,7 +1640,8 @@ skipped:
     `on_include = "skip"`. Full analysis continues with the rest of the
     analysis unit without loading the file, so code after the `include` that
     depends on its definitions may get false diagnostics such as
-    [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var).
+    [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
+    and [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var).
     The diagnostic links to the excluded file as related information.
 
 Skipped files receive no code-loading or inference diagnostics, apart from
@@ -1780,6 +1782,13 @@ For faster feedback while editing, see
 [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
 (source: `JETLS/live`), which reports a subset of undefined variable cases with
 accurate position information.
+
+To avoid reporting the same problem twice, this diagnostic is not reported for
+an undefined variable that `lowering/undef-global-var` reports in the same file
+when full analysis completes. It is still reported when, under
+[pattern-based configuration](@ref config/diagnostic/patterns),
+`lowering/undef-global-var` is turned off or has a lower severity than this
+diagnostic.
 
 #### [Field error (`inference/field-error`)](@id diagnostic/reference/inference/field-error)
 
